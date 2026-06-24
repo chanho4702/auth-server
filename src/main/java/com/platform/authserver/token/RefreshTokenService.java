@@ -1,0 +1,109 @@
+package com.platform.authserver.token;
+
+import com.platform.authserver.user.User;
+import com.platform.authserver.user.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.UUID;
+
+@Service
+public class RefreshTokenService {
+
+    public record Issued(String rawToken, String kcIdToken) {}
+    public record Rotated(User user, String newRawToken, String kcIdToken) {}
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final RefreshTokenRepository tokenRepository;
+    private final UserRepository userRepository;
+
+    @Value("${platform.refresh-token-ttl-seconds}")
+    private long ttlSeconds;
+
+    public RefreshTokenService(RefreshTokenRepository tokenRepository, UserRepository userRepository) {
+        this.tokenRepository = tokenRepository;
+        this.userRepository = userRepository;
+    }
+
+    @Transactional
+    public Issued issue(User user, String kcIdToken) {
+        String raw = newRawToken();
+        UUID familyId = UUID.randomUUID();
+        persist(user.getId(), raw, familyId, kcIdToken);
+        return new Issued(raw, kcIdToken);
+    }
+
+    @Transactional
+    public Rotated rotate(String rawToken) {
+        RefreshToken current = tokenRepository.findByTokenHash(sha256(rawToken))
+                .orElseThrow(() -> new IllegalArgumentException("알 수 없는 refresh token"));
+
+        if (current.isRevoked()) {
+            // 폐기된 토큰 재사용 = 도난. 패밀리 전체 폐기.
+            tokenRepository.revokeFamily(current.getFamilyId());
+            // replacedBy가 null이면 family revocation으로 인한 간접 폐기, 아니면 직접 재사용 탐지
+            if (current.getReplacedBy() != null) {
+                throw new ReuseDetectedException("refresh token 재사용 탐지");
+            } else {
+                throw new IllegalArgumentException("유효하지 않은 refresh token");
+            }
+        }
+        if (current.getExpiresAt().isBefore(Instant.now())) {
+            throw new IllegalArgumentException("만료된 refresh token");
+        }
+
+        User user = userRepository.findById(current.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("사용자 없음"));
+
+        String newRaw = newRawToken();
+        RefreshToken next = persist(user.getId(), newRaw, current.getFamilyId(), current.getKcIdToken());
+        current.setRevoked(true);
+        current.setReplacedBy(next.getId());
+        tokenRepository.save(current);
+
+        return new Rotated(user, newRaw, current.getKcIdToken());
+    }
+
+    /** 로그아웃: 해당 토큰의 패밀리를 폐기하고 Keycloak id_token 을 반환(없으면 null). */
+    @Transactional
+    public String revokeFamilyByRawToken(String rawToken) {
+        if (rawToken == null) {
+            return null;
+        }
+        return tokenRepository.findByTokenHash(sha256(rawToken))
+                .map(t -> {
+                    tokenRepository.revokeFamily(t.getFamilyId());
+                    return t.getKcIdToken();
+                })
+                .orElse(null);
+    }
+
+    private RefreshToken persist(Long userId, String raw, UUID familyId, String kcIdToken) {
+        RefreshToken token = new RefreshToken(
+                userId, sha256(raw), familyId, kcIdToken, Instant.now().plusSeconds(ttlSeconds));
+        return tokenRepository.save(token);
+    }
+
+    private static String newRawToken() {
+        byte[] bytes = new byte[32];
+        RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    public static String sha256(String raw) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(raw.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
