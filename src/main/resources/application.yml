@@ -1,0 +1,35 @@
+server:
+  port: 9000
+spring:
+  application:
+    name: auth-server
+  datasource:
+    url: jdbc:postgresql://localhost:5433/authdb
+    username: keycloak
+    password: keycloak
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  security:
+    oauth2:
+      client:
+        registration:
+          keycloak:
+            client-id: platform-bff
+            client-secret: platform-bff-secret
+            authorization-grant-type: authorization_code
+            scope: openid,profile,email
+            redirect-uri: "{baseUrl}/login/oauth2/code/keycloak"
+        provider:
+          keycloak:
+            issuer-uri: http://localhost:8080/realms/sso-demo
+
+platform:
+  access-token-ttl-seconds: 900
+  refresh-token-ttl-seconds: 1209600
+  issuer: http://localhost:9000
+  frontend-url: http://localhost:5173
+  cors-allowed-origin: http://localhost:5173

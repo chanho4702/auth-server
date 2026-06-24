@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:authdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  flyway:
+    enabled: false
+  security:
+    oauth2:
+      client:
+        registration:
+          keycloak:
+            client-id: test
+            client-secret: test
+            authorization-grant-type: authorization_code
+        provider:
+          keycloak:
+            authorization-uri: http://localhost:8080/auth
+            token-uri: http://localhost:8080/token
+            user-info-uri: http://localhost:8080/userinfo
+            jwk-set-uri: http://localhost:8080/jwks
+            user-name-attribute: sub
