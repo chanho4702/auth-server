@@ -14,6 +14,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+    // Spring Boot 4는 기술별 자동설정을 별도 모듈로 분리했다. flyway-core(라이브러리)만으로는
+    // Flyway가 기동 시 자동 실행되지 않으므로 Flyway 자동설정 모듈을 명시적으로 추가한다.
+    implementation 'org.springframework.boot:spring-boot-flyway'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
     runtimeOnly 'org.postgresql:postgresql'
