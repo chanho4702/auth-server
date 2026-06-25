@@ -1,7 +1,5 @@
 package com.platform.authserver.auth;
 
-import com.platform.authserver.jwt.JwtService;
-import com.platform.authserver.token.CookieFactory;
 import com.platform.authserver.token.RefreshTokenService;
 import com.platform.authserver.user.User;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,7 +17,6 @@ import org.springframework.web.context.WebApplicationContext;
 import jakarta.servlet.http.Cookie;
 import java.util.List;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
