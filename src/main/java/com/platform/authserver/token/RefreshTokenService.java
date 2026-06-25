@@ -2,6 +2,7 @@ package com.platform.authserver.token;
 
 import com.platform.authserver.user.User;
 import com.platform.authserver.user.UserRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +15,7 @@ import java.util.Base64;
 import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
 public class RefreshTokenService {
 
     public record Issued(String rawToken, String kcIdToken) {}
@@ -26,11 +28,6 @@ public class RefreshTokenService {
 
     @Value("${platform.refresh-token-ttl-seconds}")
     private long ttlSeconds;
-
-    public RefreshTokenService(RefreshTokenRepository tokenRepository, UserRepository userRepository) {
-        this.tokenRepository = tokenRepository;
-        this.userRepository = userRepository;
-    }
 
     @Transactional
     public Issued issue(User user, String kcIdToken) {

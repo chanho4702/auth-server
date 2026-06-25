@@ -1,6 +1,10 @@
 package com.platform.authserver.user;
 
 import jakarta.persistence.*;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.Instant;
 import java.util.Arrays;
@@ -8,6 +12,8 @@ import java.util.List;
 
 @Entity
 @Table(name = "users")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 전용 기본 생성자
 public class User {
 
     @Id
@@ -17,13 +23,16 @@ public class User {
     @Column(name = "keycloak_sub", nullable = false, unique = true)
     private String keycloakSub;
 
+    @Setter
     private String email;
+    @Setter
     private String name;
 
     /** 콤마 구분 문자열로 저장(예: "USER,ADMIN"). */
     @Column(nullable = false)
     private String roles = "";
 
+    @Setter
     private String provider;
 
     @Column(nullable = false)
@@ -32,17 +41,16 @@ public class User {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Setter
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
-
-    protected User() {
-    }
 
     public User(String keycloakSub) {
         this.keycloakSub = keycloakSub;
         this.createdAt = Instant.now();
     }
 
+    /** roles 컬럼은 콤마 구분 문자열이라 List 변환은 수동 유지(Lombok @Getter/@Setter 미적용). */
     public List<String> getRoles() {
         if (roles == null || roles.isBlank()) {
             return List.of();
@@ -53,15 +61,4 @@ public class User {
     public void setRoles(List<String> roleList) {
         this.roles = String.join(",", roleList);
     }
-
-    public Long getId() { return id; }
-    public String getKeycloakSub() { return keycloakSub; }
-    public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email; }
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
-    public String getProvider() { return provider; }
-    public void setProvider(String provider) { this.provider = provider; }
-    public Instant getLastLoginAt() { return lastLoginAt; }
-    public void setLastLoginAt(Instant t) { this.lastLoginAt = t; }
 }

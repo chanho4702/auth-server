@@ -1,5 +1,6 @@
 package com.platform.authserver.user;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -7,13 +8,10 @@ import java.time.Instant;
 import java.util.List;
 
 @Service
+@RequiredArgsConstructor
 public class UserService {
 
     private final UserRepository repository;
-
-    public UserService(UserRepository repository) {
-        this.repository = repository;
-    }
 
     /** Keycloak 로그인마다 호출. 없으면 생성, 있으면 프로필 동기화(JIT provisioning). */
     @Transactional
