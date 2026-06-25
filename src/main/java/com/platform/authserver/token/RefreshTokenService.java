@@ -46,14 +46,13 @@ public class RefreshTokenService {
                 .orElseThrow(() -> new IllegalArgumentException("알 수 없는 refresh token"));
 
         if (current.isRevoked()) {
-            // 폐기된 토큰 재사용 = 도난. 패밀리 전체 폐기.
-            tokenRepository.revokeFamily(current.getFamilyId());
-            // replacedBy가 null이면 family revocation으로 인한 간접 폐기, 아니면 직접 재사용 탐지
             if (current.getReplacedBy() != null) {
+                // 폐기되고 이미 교체(superseded)된 토큰의 재사용 = 도난 → 패밀리 전체 폐기
+                tokenRepository.revokeFamily(current.getFamilyId());
                 throw new ReuseDetectedException("refresh token 재사용 탐지");
-            } else {
-                throw new IllegalArgumentException("유효하지 않은 refresh token");
             }
+            // 패밀리 폐기로 부수적으로 무효화된 최신 토큰 → 단순 무효
+            throw new IllegalArgumentException("유효하지 않은 refresh token");
         }
         if (current.getExpiresAt().isBefore(Instant.now())) {
             throw new IllegalArgumentException("만료된 refresh token");
