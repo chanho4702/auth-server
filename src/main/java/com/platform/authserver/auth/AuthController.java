@@ -72,7 +72,7 @@ public class AuthController {
         String logoutUrl = null;
         if (kcIdToken != null) {
             logoutUrl = issuerUri + "/protocol/openid-connect/logout"
-                    + "?id_token_hint=" + kcIdToken
+                    + "?id_token_hint=" + URLEncoder.encode(kcIdToken, StandardCharsets.UTF_8)
                     + "&post_logout_redirect_uri=" + URLEncoder.encode(frontendUrl + "/login", StandardCharsets.UTF_8);
         }
         Map<String, Object> body = new HashMap<>();
