@@ -9,16 +9,7 @@ myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서�
 
 ## 역할 / 아키텍처
 
-```
-[myFront :5173]
-   │  ① "로그인" → 리다이렉트
-   ▼
-[auth-server :9000]  ──②위임──▶  [Keycloak :8080 / realm sso-demo]
-   │  ③로그인 성공 시: JIT 사용자 생성 + 자체 JWT 발급 + refresh 쿠키
-   │  ④ /app 으로 리다이렉트
-   ▼
-[PostgreSQL :5433 / authdb]  (users, refresh_tokens)
-```
+![Keycloak JIT 인증 흐름](keycloak_jit_auth_flow.svg)
 
 - **인증**은 Keycloak이 담당(계정·구글 SSO·로그인 화면).
 - **토큰 발급**은 auth-server가 담당 — 자체 RS256 JWT(Access Token) + 회전형 Refresh Token.
