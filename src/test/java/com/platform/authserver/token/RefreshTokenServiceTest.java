@@ -33,13 +33,15 @@ class RefreshTokenServiceTest {
         // ttl 주입(슬라이스 테스트라 @Value 미적용)
         ReflectionTestUtils.setField(service, "ttlSeconds", 1209600L);
         User u = newUser();
-        var issued = service.issue(u, "kc-id-token");
+        var issued = service.issue(u, "kc-id-token", "kc-refresh-token");
 
         var rotated = service.rotate(issued.rawToken());
 
         assertThat(rotated.user().getId()).isEqualTo(u.getId());
         assertThat(rotated.newRawToken()).isNotEqualTo(issued.rawToken());
         assertThat(rotated.kcIdToken()).isEqualTo("kc-id-token");
+        // 백채널 로그아웃용 KC refresh_token 은 rotate 후에도 회수 가능해야 한다(패밀리 승계).
+        assertThat(service.revokeFamilyByRawToken(rotated.newRawToken())).isEqualTo("kc-refresh-token");
         // 옛 토큰 재사용은 이제 도난으로 간주
         assertThatThrownBy(() -> service.rotate(issued.rawToken()))
                 .isInstanceOf(ReuseDetectedException.class);
@@ -49,7 +51,7 @@ class RefreshTokenServiceTest {
     void reuseDetectionRevokesWholeFamily() {
         ReflectionTestUtils.setField(service, "ttlSeconds", 1209600L);
         User u = newUser();
-        var issued = service.issue(u, "kc-id-token");
+        var issued = service.issue(u, "kc-id-token", "kc-refresh-token");
         var rotated = service.rotate(issued.rawToken()); // 회전 1회
 
         // 폐기된 옛 토큰 재사용 → 패밀리 전체 폐기

@@ -9,6 +9,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
@@ -27,15 +30,18 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
     private final UserService userService;
     private final RefreshTokenService refreshTokenService;
     private final CookieFactory cookieFactory;
+    private final OAuth2AuthorizedClientService authorizedClientService;
     private final String frontendUrl;
 
     public LoginSuccessHandler(UserService userService,
                                RefreshTokenService refreshTokenService,
                                CookieFactory cookieFactory,
+                               OAuth2AuthorizedClientService authorizedClientService,
                                @Value("${platform.frontend-url}") String frontendUrl) {
         this.userService = userService;
         this.refreshTokenService = refreshTokenService;
         this.cookieFactory = cookieFactory;
+        this.authorizedClientService = authorizedClientService;
         this.frontendUrl = frontendUrl;
     }
 
@@ -52,9 +58,24 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
                 OidcClaims.provider(oidcUser));
 
         String kcIdToken = oidcUser.getIdToken().getTokenValue();
-        var issued = refreshTokenService.issue(user, kcIdToken);
+        // KC refresh_token 은 OidcUser 가 아니라 authorized client 에 있다. 백채널 로그아웃에 쓴다.
+        String kcRefreshToken = extractKcRefreshToken(authentication);
+        var issued = refreshTokenService.issue(user, kcIdToken, kcRefreshToken);
 
         response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.refreshCookie(issued.rawToken()).toString());
         response.sendRedirect(frontendUrl + "/app");
+    }
+
+    /** OAuth2 authorized client 에서 Keycloak refresh_token 을 꺼낸다(없으면 null). */
+    private String extractKcRefreshToken(Authentication authentication) {
+        if (!(authentication instanceof OAuth2AuthenticationToken oauthToken)) {
+            return null;
+        }
+        OAuth2AuthorizedClient client = authorizedClientService.loadAuthorizedClient(
+                oauthToken.getAuthorizedClientRegistrationId(), oauthToken.getName());
+        if (client == null || client.getRefreshToken() == null) {
+            return null;
+        }
+        return client.getRefreshToken().getTokenValue();
     }
 }

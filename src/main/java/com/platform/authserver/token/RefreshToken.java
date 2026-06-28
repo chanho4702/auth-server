@@ -34,6 +34,10 @@ public class RefreshToken {
     @Column(name = "kc_id_token", columnDefinition = "TEXT")
     private String kcIdToken;
 
+    // 백채널 로그아웃용 Keycloak refresh_token. rotate 시 패밀리 내내 승계된다.
+    @Column(name = "kc_refresh_token", columnDefinition = "TEXT")
+    private String kcRefreshToken;
+
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
@@ -44,12 +48,14 @@ public class RefreshToken {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    public RefreshToken(Long userId, String tokenHash, UUID familyId, String kcIdToken, Instant expiresAt) {
+    public RefreshToken(Long userId, String tokenHash, UUID familyId,
+                        String kcIdToken, String kcRefreshToken, Instant expiresAt) {
         this.id = UUID.randomUUID();
         this.userId = userId;
         this.tokenHash = tokenHash;
         this.familyId = familyId;
         this.kcIdToken = kcIdToken;
+        this.kcRefreshToken = kcRefreshToken;
         this.expiresAt = expiresAt;
         this.createdAt = Instant.now();
     }

@@ -6,15 +6,12 @@ import com.platform.authserver.token.RefreshTokenService;
 import com.platform.authserver.token.ReuseDetectedException;
 import com.platform.authserver.user.User;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -25,19 +22,16 @@ public class AuthController {
     private final RefreshTokenService refreshTokenService;
     private final JwtService jwtService;
     private final CookieFactory cookieFactory;
-    private final String issuerUri;     // Keycloak realm issuer
-    private final String frontendUrl;
+    private final KeycloakLogoutClient keycloakLogoutClient;
 
     public AuthController(RefreshTokenService refreshTokenService,
                           JwtService jwtService,
                           CookieFactory cookieFactory,
-                          @Value("${spring.security.oauth2.client.provider.keycloak.issuer-uri}") String issuerUri,
-                          @Value("${platform.frontend-url}") String frontendUrl) {
+                          KeycloakLogoutClient keycloakLogoutClient) {
         this.refreshTokenService = refreshTokenService;
         this.jwtService = jwtService;
         this.cookieFactory = cookieFactory;
-        this.issuerUri = issuerUri;
-        this.frontendUrl = frontendUrl;
+        this.keycloakLogoutClient = keycloakLogoutClient;
     }
 
     @PostMapping("/refresh")
@@ -67,19 +61,14 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request) {
         String raw = readCookie(request);
-        String kcIdToken = refreshTokenService.revokeFamilyByRawToken(raw);
+        // 자체 RT 패밀리 폐기 + KC refresh_token 회수
+        String kcRefreshToken = refreshTokenService.revokeFamilyByRawToken(raw);
+        // KC SSO 세션을 서버-서버로 종료(best-effort). 브라우저 리다이렉트 불필요.
+        keycloakLogoutClient.logout(kcRefreshToken);
 
-        String logoutUrl = null;
-        if (kcIdToken != null) {
-            logoutUrl = issuerUri + "/protocol/openid-connect/logout"
-                    + "?id_token_hint=" + URLEncoder.encode(kcIdToken, StandardCharsets.UTF_8)
-                    + "&post_logout_redirect_uri=" + URLEncoder.encode(frontendUrl + "/login", StandardCharsets.UTF_8);
-        }
-        Map<String, Object> body = new HashMap<>();
-        body.put("keycloakLogoutUrl", logoutUrl);
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookieFactory.deleteCookie().toString())
-                .body(body);
+                .body(new HashMap<String, Object>());
     }
 
     private String readCookie(HttpServletRequest request) {

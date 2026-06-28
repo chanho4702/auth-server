@@ -6,6 +6,9 @@ plugins {
 group = 'com.platform'
 version = '0.0.1-SNAPSHOT'
 java { toolchain { languageVersion = JavaLanguageVersion.of(24) } }
+// 파라미터 이름을 클래스에 보존한다. Spring Data named param(@Query :x), @RequestParam/@PathVariable 등이
+// 이름 의존이라, 이 플래그가 없으면 런타임에 "provide names for method parameters" 류로 터진다.
+tasks.withType(JavaCompile).configureEach { options.compilerArgs << '-parameters' }
 repositories { mavenCentral() }
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'

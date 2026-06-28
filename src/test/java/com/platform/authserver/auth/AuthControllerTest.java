@@ -18,6 +18,7 @@ import jakarta.servlet.http.Cookie;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -30,6 +31,7 @@ class AuthControllerTest {
 
     @Autowired WebApplicationContext context;
     @MockitoBean RefreshTokenService refreshTokenService;
+    @MockitoBean KeycloakLogoutClient keycloakLogoutClient;
     MockMvc mvc;
 
     @BeforeEach
@@ -60,12 +62,14 @@ class AuthControllerTest {
     }
 
     @Test
-    void logoutReturnsKeycloakLogoutUrlAndClearsCookie() throws Exception {
-        when(refreshTokenService.revokeFamilyByRawToken(eq("raw-rt"))).thenReturn("kc-id-token");
+    void logoutTerminatesKeycloakSessionAndClearsCookie() throws Exception {
+        when(refreshTokenService.revokeFamilyByRawToken(eq("raw-rt"))).thenReturn("kc-refresh-token");
 
         mvc.perform(post("/api/auth/logout").cookie(new Cookie("refresh_token", "raw-rt")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.keycloakLogoutUrl").value(org.hamcrest.Matchers.containsString("id_token_hint=kc-id-token")))
-                .andExpect(header().exists("Set-Cookie"));
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("refresh_token=;")));
+
+        // KC SSO 세션을 백채널로 끊었는지 검증
+        verify(keycloakLogoutClient).logout("kc-refresh-token");
     }
 }

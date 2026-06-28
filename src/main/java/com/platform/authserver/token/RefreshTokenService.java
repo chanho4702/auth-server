@@ -30,10 +30,10 @@ public class RefreshTokenService {
     private long ttlSeconds;
 
     @Transactional
-    public Issued issue(User user, String kcIdToken) {
+    public Issued issue(User user, String kcIdToken, String kcRefreshToken) {
         String raw = newRawToken();
         UUID familyId = UUID.randomUUID();
-        persist(user.getId(), raw, familyId, kcIdToken);
+        persist(user.getId(), raw, familyId, kcIdToken, kcRefreshToken);
         return new Issued(raw, kcIdToken);
     }
 
@@ -59,7 +59,8 @@ public class RefreshTokenService {
                 .orElseThrow(() -> new IllegalArgumentException("사용자 없음"));
 
         String newRaw = newRawToken();
-        RefreshToken next = persist(user.getId(), newRaw, current.getFamilyId(), current.getKcIdToken());
+        RefreshToken next = persist(user.getId(), newRaw, current.getFamilyId(),
+                current.getKcIdToken(), current.getKcRefreshToken());
         current.setRevoked(true);
         current.setReplacedBy(next.getId());
         tokenRepository.save(current);
@@ -67,7 +68,10 @@ public class RefreshTokenService {
         return new Rotated(user, newRaw, current.getKcIdToken());
     }
 
-    /** 로그아웃: 해당 토큰의 패밀리를 폐기하고 Keycloak id_token 을 반환(없으면 null). */
+    /**
+     * 로그아웃: 해당 토큰의 패밀리를 폐기하고 백채널 로그아웃용 Keycloak refresh_token 을 반환(없으면 null).
+     * 반환된 refresh_token 으로 KC end_session 을 서버-서버 호출해 SSO 세션을 끊는다.
+     */
     @Transactional
     public String revokeFamilyByRawToken(String rawToken) {
         if (rawToken == null) {
@@ -76,14 +80,14 @@ public class RefreshTokenService {
         return tokenRepository.findByTokenHash(sha256(rawToken))
                 .map(t -> {
                     tokenRepository.revokeFamily(t.getFamilyId());
-                    return t.getKcIdToken();
+                    return t.getKcRefreshToken();
                 })
                 .orElse(null);
     }
 
-    private RefreshToken persist(Long userId, String raw, UUID familyId, String kcIdToken) {
+    private RefreshToken persist(Long userId, String raw, UUID familyId, String kcIdToken, String kcRefreshToken) {
         RefreshToken token = new RefreshToken(
-                userId, sha256(raw), familyId, kcIdToken, Instant.now().plusSeconds(ttlSeconds));
+                userId, sha256(raw), familyId, kcIdToken, kcRefreshToken, Instant.now().plusSeconds(ttlSeconds));
         return tokenRepository.save(token);
     }
 
