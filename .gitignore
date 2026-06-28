@@ -3,3 +3,4 @@ build/
 /auth-jwk.json
 .idea/
 .superpowers/
+/out/
