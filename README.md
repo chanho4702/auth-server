@@ -55,6 +55,8 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
 
 ## 설정 (`src/main/resources/application.yml`)
 
+> **CORS는 게이트웨이가 담당한다.** auth-server는 CORS를 직접 설정하지 않는다. 모든 브라우저 요청은 `gateway-server(:8000)`를 통과하며, CORS는 게이트웨이 `globalcors`에서 일괄 처리된다.
+
 | 키 | 기본값 |
 |---|---|
 | `server.port` | 9000 |
@@ -63,7 +65,6 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
 | `platform.access-token-ttl-seconds` | 900 |
 | `platform.refresh-token-ttl-seconds` | 1209600 (14d) |
 | `platform.frontend-url` | `http://localhost:5173` |
-| `platform.cors-allowed-origin` | `http://localhost:5173` |
 
 ## 테스트 / 빌드
 
@@ -84,7 +85,7 @@ src/main/java/com/platform/authserver/
 ├─ user/      User · UserRepository · UserService            (JIT 프로비저닝)
 ├─ token/     RefreshToken(+Repository) · RefreshTokenService · CookieFactory · ReuseDetectedException
 ├─ auth/      OidcClaims · LoginSuccessHandler · AuthController · MeController
-└─ config/    SecurityConfig                                 (2개 필터체인 + CORS + JwtDecoder)
+└─ config/    SecurityConfig                                 (2개 필터체인 + JwtDecoder. CORS는 게이트웨이가 담당)
 src/main/resources/db/migration/V1__init.sql                 (Flyway: users, refresh_tokens)
 ```
 
