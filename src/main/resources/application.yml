@@ -1,5 +1,7 @@
 server:
   port: 9000
+  # 게이트웨이(:8000) 뒤에서 X-Forwarded-* 헤더를 신뢰해 OIDC redirect_uri를 게이트웨이 호스트로 구성.
+  forward-headers-strategy: framework
 spring:
   application:
     name: auth-server
@@ -32,4 +34,3 @@ platform:
   refresh-token-ttl-seconds: 1209600
   issuer: http://localhost:9000
   frontend-url: http://localhost:5173
-  cors-allowed-origin: http://localhost:5173
