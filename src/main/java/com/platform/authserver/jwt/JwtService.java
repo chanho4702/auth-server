@@ -18,13 +18,16 @@ public class JwtService {
 
     private final JwtKeyProvider keyProvider;
     private final String issuer;
+    private final String audience;
     private final long ttlSeconds;
 
     public JwtService(JwtKeyProvider keyProvider,
                       @Value("${platform.issuer}") String issuer,
+                      @Value("${platform.audience}") String audience,
                       @Value("${platform.access-token-ttl-seconds}") long ttlSeconds) {
         this.keyProvider = keyProvider;
         this.issuer = issuer;
+        this.audience = audience;
         this.ttlSeconds = ttlSeconds;
     }
 
@@ -33,6 +36,7 @@ public class JwtService {
         try {
             JWTClaimsSet claims = new JWTClaimsSet.Builder()
                     .issuer(issuer)
+                    .audience(audience)
                     .subject(String.valueOf(userId))
                     .claim("email", email)
                     .claim("name", name)

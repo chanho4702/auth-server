@@ -41,6 +41,8 @@ class MeControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sub").value("42"))
                 .andExpect(jsonPath("$.email").value("alice@demo.com"))
+                .andExpect(jsonPath("$.name").value("Alice"))
+                .andExpect(jsonPath("$.provider").value("GOOGLE"))
                 .andExpect(jsonPath("$.role").value("USER"));
     }
 

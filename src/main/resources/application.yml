@@ -5,10 +5,11 @@ server:
 spring:
   application:
     name: auth-server
+  # 모든 자격증명/URL은 env로 오버라이드 가능. 기본값은 로컬 dev 전용 — 운영에서는 반드시 주입.
   datasource:
-    url: jdbc:postgresql://localhost:5433/authdb
-    username: keycloak
-    password: keycloak
+    url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5433/authdb}
+    username: ${AUTH_DB_USERNAME:keycloak}
+    password: ${AUTH_DB_PASSWORD:keycloak}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -20,17 +21,21 @@ spring:
       client:
         registration:
           keycloak:
-            client-id: platform-bff
-            client-secret: platform-bff-secret
+            client-id: ${OIDC_CLIENT_ID:platform-bff}
+            client-secret: ${OIDC_CLIENT_SECRET:platform-bff-secret}
             authorization-grant-type: authorization_code
             scope: openid,profile,email
             redirect-uri: "{baseUrl}/login/oauth2/code/keycloak"
         provider:
           keycloak:
-            issuer-uri: http://localhost:8080/realms/sso-demo
+            issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/sso-demo}
 
 platform:
-  access-token-ttl-seconds: 900
-  refresh-token-ttl-seconds: 1209600
-  issuer: http://localhost:9000
-  frontend-url: http://localhost:5173
+  access-token-ttl-seconds: ${ACCESS_TOKEN_TTL_SECONDS:900}
+  refresh-token-ttl-seconds: ${REFRESH_TOKEN_TTL_SECONDS:1209600}
+  issuer: ${PLATFORM_ISSUER:http://localhost:9000}
+  # 자체 AT의 aud 클레임. 리소스서버(board-service 등)가 같은 값을 검증한다.
+  audience: ${PLATFORM_AUDIENCE:platform-api}
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}
+  # RT 쿠키 Secure 속성. 운영(https)에서는 true로 주입.
+  cookie-secure: ${COOKIE_SECURE:false}

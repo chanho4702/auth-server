@@ -67,7 +67,8 @@ class AuthControllerTest {
 
         mvc.perform(post("/api/auth/logout").cookie(new Cookie("refresh_token", "raw-rt")))
                 .andExpect(status().isOk())
-                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("refresh_token=;")));
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("refresh_token=;")))
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("Max-Age=0")));
 
         // KC SSO 세션을 백채널로 끊었는지 검증
         verify(keycloakLogoutClient).logout("kc-refresh-token");

@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JwtServiceTest {
 
     private final JwtKeyProvider keyProvider = new JwtKeyProvider(null);
-    private final JwtService jwtService = new JwtService(keyProvider, "http://localhost:9000", 900);
+    private final JwtService jwtService = new JwtService(keyProvider, "http://localhost:9000", "platform-api", 900);
 
     JwtServiceTest() throws Exception {
         keyProvider.init();
@@ -28,6 +28,7 @@ class JwtServiceTest {
         assertThat(jwt.verify(verifier)).isTrue();
         assertThat(jwt.getHeader().getKeyID()).isEqualTo(keyProvider.keyId());
         assertThat(jwt.getJWTClaimsSet().getIssuer()).isEqualTo("http://localhost:9000");
+        assertThat(jwt.getJWTClaimsSet().getAudience()).containsExactly("platform-api");
         assertThat(jwt.getJWTClaimsSet().getSubject()).isEqualTo("42");
         assertThat(jwt.getJWTClaimsSet().getStringClaim("email")).isEqualTo("alice@demo.com");
         assertThat(jwt.getJWTClaimsSet().getStringClaim("name")).isEqualTo("Alice");
