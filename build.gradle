@@ -10,7 +10,18 @@ java { toolchain { languageVersion = JavaLanguageVersion.of(24) } }
 // 이름 의존이라, 이 플래그가 없으면 런타임에 "provide names for method parameters" 류로 터진다.
 tasks.withType(JavaCompile).configureEach { options.compilerArgs << '-parameters' }
 repositories { mavenCentral() }
+
+ext {
+    set('springCloudVersion', '2025.1.2')
+}
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+    }
+}
 dependencies {
+    // 유레카 자기등록 — 게이트웨이 lb://auth-server가 이 등록을 바라본다
+    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'

@@ -12,3 +12,8 @@ spring:
 # OAuth2 client 등록은 TestOAuth2ClientConfig 의 ClientRegistrationRepository 빈으로
 # 제공한다. 빈을 직접 주면 Boot 자동설정(@ConditionalOnMissingBean)이 back off 하여
 # base application.yml 의 issuer-uri discovery(네트워크 호출)를 타지 않는다.
+
+# 단위 테스트는 유레카 서버 없이 돈다 — 등록 시도/에러 로그 차단
+eureka:
+  client:
+    enabled: false

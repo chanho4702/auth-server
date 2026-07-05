@@ -30,6 +30,11 @@ spring:
           keycloak:
             issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/sso-demo}
 
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
+
 platform:
   access-token-ttl-seconds: ${ACCESS_TOKEN_TTL_SECONDS:900}
   refresh-token-ttl-seconds: ${REFRESH_TOKEN_TTL_SECONDS:1209600}
