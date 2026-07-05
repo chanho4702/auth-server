@@ -34,6 +34,10 @@ eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
+  instance:
+    # Windows/사설망에서 DESKTOP-xxx.mshome.net 같은 DNS 해석 불가 호스트명으로 등록되면
+    # 게이트웨이의 lb:// 해석이 UnknownHostException으로 죽는다 — IP로 등록 (E2E에서 실측).
+    prefer-ip-address: true
 
 platform:
   access-token-ttl-seconds: ${ACCESS_TOKEN_TTL_SECONDS:900}
