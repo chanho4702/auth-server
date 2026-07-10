@@ -13,7 +13,10 @@ myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서�
 
 - **인증**은 Keycloak이 담당(계정·구글 SSO·로그인 화면).
 - **토큰 발급**은 auth-server가 담당 — 자체 RS256 JWT(Access Token) + 회전형 Refresh Token.
-- `/.well-known/jwks.json`로 **공개키만** 노출 → 미래 마이크로서비스가 `issuer-uri`(=`http://localhost:9000`)만으로 토큰 검증 가능(SSO 토대).
+- `/.well-known/jwks.json`로 **공개키만** 노출 → 각 마이크로서비스가 `issuer-uri`(=`http://localhost:9000`)만으로 토큰을 **자체 검증**(분산 검증, SSO 토대).
+- **브라우저 요청은 게이트웨이(`gateway-server`, :8000)를 경유**한다. `forward-headers-strategy: framework`로 `X-Forwarded-*` 헤더를 신뢰해 OIDC `redirect_uri`가 게이트웨이 호스트 기준으로 구성된다.
+
+**로그인 흐름:** 게이트웨이 경유 OIDC 로그인 성공 → JIT 사용자 프로비저닝 → RT 쿠키 발급 → 프론트 `/app`로 리다이렉트. 자체 Access Token은 이때 주지 않고, 프론트가 마운트 시 `/api/auth/refresh`로 받는다(silent restore).
 
 ## 기술 스택
 
@@ -33,6 +36,8 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
 
 기동 확인: `http://localhost:9000/.well-known/jwks.json` → `{"keys":[{"kty":"RSA",...}]}`
 
+> 브라우저 로그인 플로우 전체를 돌리려면 `gateway-server(:8000)`와 `myFront(:5173)`도 함께 떠 있어야 한다. 포트 맵: gateway 8000 / auth 9000 / board 9100 / Keycloak 8080 / Postgres 5433 / myFront 5173.
+
 ## 엔드포인트
 
 | 메서드 | 경로 | 인증 | 설명 |
@@ -40,14 +45,17 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
 | GET | `/oauth2/authorization/keycloak` | - | OIDC 로그인 시작(Keycloak로 리다이렉트). `?kc_idp_hint=google`로 구글 직행 |
 | GET | `/.well-known/jwks.json` | - | 서명 공개키(JWK Set) |
 | POST | `/api/auth/refresh` | RT 쿠키 | RT 회전 + 새 Access Token `{accessToken}` 발급 |
-| POST | `/api/auth/logout` | RT 쿠키 | 토큰 패밀리 폐기 + `{keycloakLogoutUrl}`(Keycloak end_session) 반환 + 쿠키 삭제 |
+| POST | `/api/auth/logout` | RT 쿠키 | 토큰 패밀리 폐기 + **KC SSO 세션 백채널(서버-서버) 종료** + 쿠키 삭제. 응답 `{}` — 브라우저 리다이렉트 불필요 |
 | GET | `/api/me` | Bearer(자체 JWT) | 토큰 claim 기반 사용자 정보 `{sub,email,name,role,provider}` |
+
+브라우저에서는 게이트웨이(:8000) 경유로 접근한다(예: 로그인 시작 = `http://localhost:8000/oauth2/authorization/keycloak`). 게이트웨이는 `/oauth2/**`·`/login/**`·`/api/auth/**`·`/.well-known/**`·`/api/me`를 경로 그대로(No StripPrefix) auth-server로 라우팅한다.
 
 ## 토큰 모델
 
 - **Access Token**: RS256 JWT, 15분, claim `iss/sub(=users.id)/email/name/roles/provider/iat/exp`. 메모리 보관(프론트).
 - **Refresh Token**: opaque 32바이트 랜덤, 14일. 쿠키 `refresh_token`(HttpOnly·SameSite=Lax·Secure=false(dev)·Path=/api/auth). **DB에는 SHA-256 해시만 저장**(원문 저장 안 함).
 - **회전 + 재사용 탐지**: refresh마다 새 토큰으로 교체하고 옛 토큰 폐기. 이미 교체된(폐기된) 토큰이 다시 쓰이면 **도난으로 간주해 토큰 패밀리 전체를 폐기**한다.
+- **백채널 로그아웃**: RT 행에 Keycloak `id_token`·`refresh_token`을 함께 보관(V2 마이그레이션). 로그아웃 시 KC `refresh_token`으로 end_session을 **서버-서버 호출**해 SSO 세션을 확실히 끊는다(id_token_hint 리다이렉트 방식은 id_token 만료 시 "재로그인 즉시" 문제가 있어 폐기). 실패해도 로컬 세션은 이미 정리됐으므로 로그아웃은 성공 처리(best-effort).
 
 ## 서명 키 — `auth-jwk.json`
 
@@ -57,14 +65,17 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
 
 > **CORS는 게이트웨이가 담당한다.** auth-server는 CORS를 직접 설정하지 않는다. 모든 브라우저 요청은 `gateway-server(:8000)`를 통과하며, CORS는 게이트웨이 `globalcors`에서 일괄 처리된다.
 
-| 키 | 기본값 |
-|---|---|
-| `server.port` | 9000 |
-| `spring.datasource.url` | `jdbc:postgresql://localhost:5433/authdb` (user/pw `keycloak`) |
-| `spring.security.oauth2.client...keycloak.issuer-uri` | `http://localhost:8080/realms/sso-demo` |
-| `platform.access-token-ttl-seconds` | 900 |
-| `platform.refresh-token-ttl-seconds` | 1209600 (14d) |
-| `platform.frontend-url` | `http://localhost:5173` |
+| 키 | 기본값 | 비고 |
+|---|---|---|
+| `server.port` | 9000 | |
+| `server.forward-headers-strategy` | `framework` | 게이트웨이(:8000) 뒤에서 `X-Forwarded-*`를 신뢰해 OIDC redirect_uri를 게이트웨이 호스트로 구성 |
+| `spring.datasource.url` | `jdbc:postgresql://localhost:5433/authdb` | user/pw `keycloak` |
+| `spring.security.oauth2.client...keycloak.client-id` | `platform-bff` | 컨피덴셜 클라이언트(secret `platform-bff-secret`) — 백채널 로그아웃에도 사용 |
+| `spring.security.oauth2.client...keycloak.issuer-uri` | `http://localhost:8080/realms/sso-demo` | |
+| `platform.access-token-ttl-seconds` | 900 | |
+| `platform.refresh-token-ttl-seconds` | 1209600 (14d) | |
+| `platform.issuer` | `http://localhost:9000` | 자체 JWT `iss` — 각 서비스의 토큰 검증 기준 |
+| `platform.frontend-url` | `http://localhost:5173` | 로그인 성공 후 `{frontend-url}/app` 리다이렉트 |
 
 ## 테스트 / 빌드
 
@@ -84,9 +95,11 @@ src/main/java/com/platform/authserver/
 ├─ jwt/       JwtKeyProvider · JwtService · JwksController   (RS256 발급 + JWKS)
 ├─ user/      User · UserRepository · UserService            (JIT 프로비저닝)
 ├─ token/     RefreshToken(+Repository) · RefreshTokenService · CookieFactory · ReuseDetectedException
-├─ auth/      OidcClaims · LoginSuccessHandler · AuthController · MeController
+├─ auth/      OidcClaims · LoginSuccessHandler · AuthController · MeController · KeycloakLogoutClient(백채널 로그아웃)
 └─ config/    SecurityConfig                                 (2개 필터체인 + JwtDecoder. CORS는 게이트웨이가 담당)
-src/main/resources/db/migration/V1__init.sql                 (Flyway: users, refresh_tokens)
+src/main/resources/db/migration/
+├─ V1__init.sql                                              (users, refresh_tokens)
+└─ V2__add_kc_refresh_token.sql                              (백채널 로그아웃용 kc_refresh_token 컬럼)
 ```
 
 보안 필터체인 2개: `/api/me` = 자체 JWT 리소스서버(stateless), 그 외 = oauth2Login + `/api/auth/**`·`/.well-known/**`·`/error` permitAll.
