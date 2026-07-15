@@ -48,3 +48,18 @@ platform:
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
   # RT 쿠키 Secure 속성. 운영(https)에서는 true로 주입.
   cookie-secure: ${COOKIE_SECURE:false}
+---
+# docker 프로필 — 컨테이너 배포 전용 (compose가 SPRING_PROFILES_ACTIVE=docker 주입).
+# 디스커버리/백채널은 KEYCLOAK_ISSUER_URI(keycloak:8080)로 일관 — iss 검증도 그 값과 일치.
+# 브라우저 리다이렉트(authorization endpoint)만 호스트 오리진(localhost:8080)으로 오버라이드.
+# Boot는 issuer 디스커버리 후 명시 프로퍼티로 덮어쓴다 — authorization-uri만 바뀐다.
+spring:
+  config:
+    activate:
+      on-profile: docker
+  security:
+    oauth2:
+      client:
+        provider:
+          keycloak:
+            authorization-uri: ${KEYCLOAK_BROWSER_BASE:http://localhost:8080}/realms/sso-demo/protocol/openid-connect/auth
