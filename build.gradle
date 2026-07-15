@@ -42,3 +42,4 @@ dependencies {
     testRuntimeOnly 'com.h2database:h2'
 }
 tasks.named('test') { useJUnitPlatform() }
+tasks.named('bootJar') { archiveFileName = 'app.jar' }
