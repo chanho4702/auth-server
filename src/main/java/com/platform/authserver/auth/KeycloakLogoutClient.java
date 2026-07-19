@@ -4,11 +4,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 /**
  * Keycloak 백채널(서버-서버) 로그아웃.
@@ -37,7 +41,18 @@ public class KeycloakLogoutClient {
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         // Boot 4는 RestClient.Builder 빈을 기본 자동구성하지 않으므로 정적 팩토리로 직접 만든다.
-        this.restClient = RestClient.create();
+        // KC 행(hang) 시 서블릿 스레드 동반 고갈 방지 — best-effort는 예외는 삼켜도 행은 못 삼킨다.
+        // Boot 4.0.6의 ClientHttpRequestFactorySettings/ClientHttpRequestFactoryBuilder는
+        // spring-boot-http-client 모듈에 있으나 이 프로젝트 classpath엔 없다(어떤 starter도 끌어오지 않음) —
+        // 새 의존성 추가 대신 spring-web에 이미 있는 JdkClientHttpRequestFactory로 직접 타임아웃 설정.
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(3));
+        this.restClient = RestClient.builder()
+                .requestFactory(requestFactory)
+                .build();
     }
 
     /** KC SSO 세션을 종료한다. refresh_token 이 없거나 호출 실패 시 경고만 남기고 조용히 넘어간다. */
