@@ -1,6 +1,7 @@
 package com.platform.authserver.auth;
 
 import com.platform.authserver.jwt.JwtService;
+import com.platform.authserver.token.ConcurrentRotationException;
 import com.platform.authserver.token.CookieFactory;
 import com.platform.authserver.token.RefreshTokenService;
 import com.platform.authserver.token.ReuseDetectedException;
@@ -18,6 +19,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthController.class);
 
     private final RefreshTokenService refreshTokenService;
     private final JwtService jwtService;
@@ -51,10 +54,17 @@ public class AuthController {
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE, cookieFactory.refreshCookie(rotated.newRawToken()).toString())
                     .body(body);
-        } catch (ReuseDetectedException | IllegalArgumentException e) {
-            return ResponseEntity.status(401)
-                    .header(HttpHeaders.SET_COOKIE, cookieFactory.deleteCookie().toString())
-                    .body(Map.of("error", "invalid_refresh_token"));
+        } catch (ReuseDetectedException e) {
+            // 최고 등급 보안 이벤트 — 탈취 의심. 응답은 다른 실패와 동일(정보 노출 최소화).
+            log.warn("RT 재사용 탐지 — 계정 탈취 의심. userId={}, familyId={}", e.getUserId(), e.getFamilyId());
+            return unauthorizedWithCookieDelete();
+        } catch (ConcurrentRotationException e) {
+            // 멀티탭 경쟁 패배 — 승자가 심은 새 쿠키를 지우면 안 되므로 Set-Cookie 없이 401만.
+            log.debug("RT rotate 경쟁 패배: {}", e.getMessage());
+            return ResponseEntity.status(401).body(Map.of("error", "invalid_refresh_token"));
+        } catch (IllegalArgumentException e) {
+            log.debug("무효 RT: {}", e.getMessage());
+            return unauthorizedWithCookieDelete();
         }
     }
 
@@ -81,5 +91,11 @@ public class AuthController {
             }
         }
         return null;
+    }
+
+    private ResponseEntity<?> unauthorizedWithCookieDelete() {
+        return ResponseEntity.status(401)
+                .header(HttpHeaders.SET_COOKIE, cookieFactory.deleteCookie().toString())
+                .body(Map.of("error", "invalid_refresh_token"));
     }
 }

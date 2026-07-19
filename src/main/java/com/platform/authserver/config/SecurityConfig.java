@@ -7,9 +7,16 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.http.converter.FormHttpMessageConverter;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.client.endpoint.OAuth2AccessTokenResponseClient;
+import org.springframework.security.oauth2.client.endpoint.OAuth2AuthorizationCodeGrantRequest;
+import org.springframework.security.oauth2.client.endpoint.RestClientAuthorizationCodeTokenResponseClient;
+import org.springframework.security.oauth2.client.http.OAuth2ErrorResponseErrorHandler;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimNames;
 import org.springframework.security.oauth2.jwt.JwtClaimValidator;
@@ -19,7 +26,10 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.List;
 
 @Configuration
@@ -70,5 +80,38 @@ public class SecurityConfig {
                         .anyRequest().authenticated())
                 .oauth2Login(oauth2 -> oauth2.successHandler(successHandler));
         return http.build();
+    }
+
+    /**
+     * 로그인(인가 코드 → 토큰 교환) 타임아웃.
+     *
+     * Boot 4.0.6 의 {@code spring.http.client(s).*} 프로퍼티는 바인딩은 되지만(설정 메타데이터로 실측 확인)
+     * Spring Security 의 기본 OAuth2 인가 코드 토큰 응답 클라이언트(RestClientAuthorizationCodeTokenResponseClient)는
+     * Boot 의 RestClient.Builder 자동구성을 전혀 거치지 않고 인자 없는 생성자로 자체 RestClient 를 만든다
+     * (OAuth2LoginConfigurer.getAccessTokenResponseClient() 바이트코드 실측) — 즉 yml 만으로는 이 경로에
+     * 타임아웃이 적용되지 않는다. 대신 이 타입의 빈을 등록하면 OAuth2LoginConfigurer 가 getBeanOrNull 로
+     * 자동 탐지해 사용하므로, 여기서 직접 타임아웃 있는 RestClient 를 주입한다.
+     *
+     * ClientHttpRequestFactorySettings/Builder(spring-boot-http-client 모듈)는 이 프로젝트 classpath에 없어
+     * (어떤 starter도 끌어오지 않음, 새 의존성 추가는 범위 밖) spring-web 내장 JdkClientHttpRequestFactory로 대체.
+     */
+    @Bean
+    OAuth2AccessTokenResponseClient<OAuth2AuthorizationCodeGrantRequest> tokenResponseClient() {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(3));
+        RestClient restClient = RestClient.builder()
+                .requestFactory(requestFactory)
+                .configureMessageConverters(converters -> converters
+                        .disableDefaults()
+                        .addCustomConverter(new FormHttpMessageConverter())
+                        .addCustomConverter(new OAuth2AccessTokenResponseHttpMessageConverter()))
+                .defaultStatusHandler(new OAuth2ErrorResponseErrorHandler())
+                .build();
+        var client = new RestClientAuthorizationCodeTokenResponseClient();
+        client.setRestClient(restClient);
+        return client;
     }
 }

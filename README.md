@@ -48,6 +48,8 @@ myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서�
    - RT 쿠키(`refresh_token`) set → `{frontend-url}/app`로 리다이렉트(오픈 리다이렉트 방어: `/`로 시작하고 `//`가 아닌 상대경로만 허용).
 4. 프론트가 마운트 시 `POST /api/auth/refresh` → 자체 Access Token 수령(silent restore).
 
+RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁으로 관용하고, grace를 넘긴 재사용은 도난으로 판단해 토큰 패밀리 전체를 폐기하며 WARN 로그를 남긴다.
+
 ### 2. 백채널(서버-서버) 로그아웃
 
 `POST /api/auth/logout`:
@@ -109,6 +111,9 @@ myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서�
 | `platform.frontend-url` | `FRONTEND_URL` | `http://localhost:5173` | 로그인 성공 후 `{frontend-url}/app` 리다이렉트 |
 | `platform.cookie-secure` | `COOKIE_SECURE` | `false` | RT 쿠키 Secure. 운영(https)에서 true |
 | `platform.jwk-path` | - | `./auth-jwk.json` | 서명 키 파일 경로 |
+| `platform.rotation-grace-seconds` | `ROTATION_GRACE_SECONDS` | `30` | RT 회전 경쟁(멀티탭) 관용 창 — 이내 재사용은 도난 아님 |
+| `platform.session-absolute-ttl-seconds` | `SESSION_ABSOLUTE_TTL_SECONDS` | `7776000` | 가족 생성 기준 절대 세션 상한(90일) |
+| `platform.token-cleanup-cron` | `TOKEN_CLEANUP_CRON` | `0 0 4 * * *` | RT 청소 배치 주기 |
 
 ### docker 프로필 — split-horizon OIDC
 

@@ -29,43 +29,73 @@ public class RefreshTokenService {
     @Value("${platform.refresh-token-ttl-seconds}")
     private long ttlSeconds;
 
+    @Value("${platform.rotation-grace-seconds}")
+    private long graceSeconds;
+
+    @Value("${platform.session-absolute-ttl-seconds}")
+    private long absoluteTtlSeconds;
+
     @Transactional
     public Issued issue(User user, String kcIdToken, String kcRefreshToken) {
         String raw = newRawToken();
         UUID familyId = UUID.randomUUID();
-        persist(user.getId(), raw, familyId, kcIdToken, kcRefreshToken);
+        persist(user.getId(), raw, familyId, kcIdToken, kcRefreshToken, Instant.now());
         return new Issued(raw, kcIdToken);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = ReuseDetectedException.class)
     public Rotated rotate(String rawToken) {
         RefreshToken current = tokenRepository.findByTokenHash(sha256(rawToken))
                 .orElseThrow(() -> new IllegalArgumentException("알 수 없는 refresh token"));
 
         if (current.isRevoked()) {
-            if (current.getReplacedBy() != null) {
-                // 폐기되고 이미 교체(superseded)된 토큰의 재사용 = 도난 → 패밀리 전체 폐기
-                tokenRepository.revokeFamily(current.getFamilyId());
-                throw new ReuseDetectedException("refresh token 재사용 탐지");
-            }
-            // 패밀리 폐기로 부수적으로 무효화된 최신 토큰 → 단순 무효
-            throw new IllegalArgumentException("유효하지 않은 refresh token");
+            handleRevoked(current); // 항상 throw
         }
         if (current.getExpiresAt().isBefore(Instant.now())) {
             throw new IllegalArgumentException("만료된 refresh token");
         }
+        // sliding 만료 보완: 가족 생성 후 절대 상한을 넘기면 재로그인 유도
+        if (Instant.now().isAfter(current.getFamilyCreatedAt().plusSeconds(absoluteTtlSeconds))) {
+            throw new IllegalArgumentException("세션 절대 상한 초과");
+        }
 
         User user = userRepository.findById(current.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("사용자 없음"));
+        if (!user.isEnabled()) {
+            throw new IllegalArgumentException("비활성화된 사용자");
+        }
 
+        // 선점(조건부 UPDATE) → INSERT 순서. next ID를 선확정해야 선점 쿼리에 실을 수 있다.
         String newRaw = newRawToken();
-        RefreshToken next = persist(user.getId(), newRaw, current.getFamilyId(),
-                current.getKcIdToken(), current.getKcRefreshToken());
-        current.setRevoked(true);
-        current.setReplacedBy(next.getId());
-        tokenRepository.save(current);
+        RefreshToken next = new RefreshToken(user.getId(), sha256(newRaw), current.getFamilyId(),
+                current.getKcIdToken(), current.getKcRefreshToken(),
+                Instant.now().plusSeconds(ttlSeconds), current.getFamilyCreatedAt());
 
-        return new Rotated(user, newRaw, current.getKcIdToken());
+        int claimed = tokenRepository.markRotated(current.getId(), next.getId(), Instant.now());
+        if (claimed == 0) {
+            // 경쟁 패배 — clearAutomatically 로 컨텍스트가 비워졌으므로 재조회 후 grace 판정
+            RefreshToken fresh = tokenRepository.findById(current.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 refresh token"));
+            handleRevoked(fresh); // 항상 throw
+        }
+        tokenRepository.save(next);
+
+        return new Rotated(user, newRaw, next.getKcIdToken());
+    }
+
+    /** 폐기된 토큰 처리: grace 이내 재사용=경쟁 관용, 경과=도난(가족 폐기), 교체 이력 없으면 단순 무효. */
+    private void handleRevoked(RefreshToken t) {
+        if (t.getReplacedBy() != null) {
+            if (t.getReplacedAt() != null
+                    && t.getReplacedAt().isAfter(Instant.now().minusSeconds(graceSeconds))) {
+                throw new ConcurrentRotationException("grace 이내 재사용 — 멀티탭 경쟁으로 관용");
+            }
+            // grace 밖 재사용 = 도난 → 패밀리 전체 폐기 (noRollbackFor 로 커밋 보장)
+            tokenRepository.revokeFamily(t.getFamilyId());
+            throw new ReuseDetectedException("refresh token 재사용 탐지", t.getUserId(), t.getFamilyId());
+        }
+        // 패밀리 폐기로 부수적으로 무효화된 토큰 → 단순 무효
+        throw new IllegalArgumentException("유효하지 않은 refresh token");
     }
 
     /**
@@ -85,9 +115,11 @@ public class RefreshTokenService {
                 .orElse(null);
     }
 
-    private RefreshToken persist(Long userId, String raw, UUID familyId, String kcIdToken, String kcRefreshToken) {
+    private RefreshToken persist(Long userId, String raw, UUID familyId,
+                                 String kcIdToken, String kcRefreshToken, Instant familyCreatedAt) {
         RefreshToken token = new RefreshToken(
-                userId, sha256(raw), familyId, kcIdToken, kcRefreshToken, Instant.now().plusSeconds(ttlSeconds));
+                userId, sha256(raw), familyId, kcIdToken, kcRefreshToken,
+                Instant.now().plusSeconds(ttlSeconds), familyCreatedAt);
         return tokenRepository.save(token);
     }
 

@@ -45,11 +45,21 @@ public class RefreshToken {
     @Column(nullable = false)
     private boolean revoked = false;
 
+    // rotate 선점 시각. grace 판정 기준 — markRotated 쿼리가 채우고, 테스트만 setter로 조작한다.
+    @Setter
+    @Column(name = "replaced_at")
+    private Instant replacedAt;
+
+    // 가족 최초 생성 시각. rotate 시 승계 — 절대 세션 상한 판정 기준.
+    @Setter
+    @Column(name = "family_created_at", nullable = false)
+    private Instant familyCreatedAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     public RefreshToken(Long userId, String tokenHash, UUID familyId,
-                        String kcIdToken, String kcRefreshToken, Instant expiresAt) {
+                        String kcIdToken, String kcRefreshToken, Instant expiresAt, Instant familyCreatedAt) {
         this.id = UUID.randomUUID();
         this.userId = userId;
         this.tokenHash = tokenHash;
@@ -57,6 +67,7 @@ public class RefreshToken {
         this.kcIdToken = kcIdToken;
         this.kcRefreshToken = kcRefreshToken;
         this.expiresAt = expiresAt;
+        this.familyCreatedAt = familyCreatedAt;
         this.createdAt = Instant.now();
     }
 }

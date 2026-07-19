@@ -1,6 +1,8 @@
 package com.platform.authserver.auth;
 
+import com.platform.authserver.token.ConcurrentRotationException;
 import com.platform.authserver.token.RefreshTokenService;
+import com.platform.authserver.token.ReuseDetectedException;
 import com.platform.authserver.user.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import jakarta.servlet.http.Cookie;
 import java.util.List;
+import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -72,5 +75,28 @@ class AuthControllerTest {
 
         // KC SSO 세션을 백채널로 끊었는지 검증
         verify(keycloakLogoutClient).logout("kc-refresh-token");
+    }
+
+    @Test
+    void reuseDetectionReturns401AndDeletesCookie() throws Exception {
+        when(refreshTokenService.rotate(eq("stolen-rt")))
+                .thenThrow(new ReuseDetectedException("재사용", 42L, UUID.randomUUID()));
+
+        mvc.perform(post("/api/auth/refresh").cookie(new Cookie("refresh_token", "stolen-rt")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("refresh_token=;")))
+                .andExpect(jsonPath("$.error").value("invalid_refresh_token"));
+    }
+
+    @Test
+    void concurrentRotationReturns401ButKeepsCookie() throws Exception {
+        // 경쟁 패배(멀티탭)는 승자가 심은 새 쿠키를 지우면 안 된다 — Set-Cookie 자체가 없어야 함
+        when(refreshTokenService.rotate(eq("raced-rt")))
+                .thenThrow(new ConcurrentRotationException("경쟁 패배"));
+
+        mvc.perform(post("/api/auth/refresh").cookie(new Cookie("refresh_token", "raced-rt")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().doesNotExist("Set-Cookie"))
+                .andExpect(jsonPath("$.error").value("invalid_refresh_token"));
     }
 }

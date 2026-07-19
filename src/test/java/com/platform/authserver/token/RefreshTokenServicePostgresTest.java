@@ -1,0 +1,178 @@
+package com.platform.authserver.token;
+
+import com.platform.authserver.TestOAuth2ClientConfig;
+import com.platform.authserver.user.User;
+import com.platform.authserver.user.UserRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.TestPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import static org.assertj.core.api.Assertions.*;
+
+/**
+ * 실 Postgres 검증 — H2 슬라이스 테스트가 못 보는 것들:
+ * 동시 rotate 경쟁, noRollbackFor 커밋 동작, V3 마이그레이션(Flyway on).
+ * test 프로필을 쓰지 않는다(프로필이 H2+Flyway off 로 바꿔버린다).
+ */
+@Testcontainers
+@SpringBootTest
+@Import(TestOAuth2ClientConfig.class)
+@TestPropertySource(properties = {"eureka.client.enabled=false"})
+class RefreshTokenServicePostgresTest {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
+    @Autowired RefreshTokenService service;
+    @Autowired UserRepository userRepository;
+    @Autowired RefreshTokenRepository tokenRepository;
+    @Autowired TokenCleanupJob cleanupJob;
+
+    @AfterEach
+    void clean() {
+        tokenRepository.deleteAll();
+        userRepository.deleteAll();
+    }
+
+    private User newUser() {
+        User u = new User("kc-sub-pg-" + System.nanoTime());
+        u.setRoles(List.of("USER"));
+        return userRepository.save(u);
+    }
+
+    @Test
+    void concurrentRotateLeavesExactlyOneLiveToken() throws Exception {
+        User u = newUser();
+        var issued = service.issue(u, "kc-id", "kc-rt");
+
+        var barrier = new CyclicBarrier(2);
+        Callable<Object> attempt = () -> {
+            barrier.await();
+            try {
+                return service.rotate(issued.rawToken());
+            } catch (RuntimeException e) {
+                return e;
+            }
+        };
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        List<Object> results;
+        try {
+            results = pool.invokeAll(List.of(attempt, attempt)).stream()
+                    .map(f -> {
+                        try { return f.get(); } catch (Exception e) { throw new IllegalStateException(e); }
+                    }).toList();
+        } finally {
+            pool.shutdown();
+        }
+
+        // 정확히 1승 1패 — 패자는 경쟁 관용(도난 오판 아님)
+        assertThat(results).filteredOn(r -> r instanceof RefreshTokenService.Rotated).hasSize(1);
+        assertThat(results).filteredOn(r -> r instanceof ConcurrentRotationException).hasSize(1);
+        // DB: 살아있는 토큰 정확히 1개, 가족 생존
+        assertThat(tokenRepository.findAll()).filteredOn(t -> !t.isRevoked()).hasSize(1);
+    }
+
+    @Test
+    void reuseWithinGraceKeepsFamilyAlive() {
+        User u = newUser();
+        var issued = service.issue(u, "kc-id", "kc-rt");
+        var rotated = service.rotate(issued.rawToken());
+
+        assertThatThrownBy(() -> service.rotate(issued.rawToken()))
+                .isInstanceOf(ConcurrentRotationException.class);
+        assertThatCode(() -> service.rotate(rotated.newRawToken())).doesNotThrowAnyException();
+    }
+
+    @Test
+    void reuseAfterGraceRevokesFamilyAndCommitsDespiteException() {
+        User u = newUser();
+        var issued = service.issue(u, "kc-id", "kc-rt");
+        service.rotate(issued.rawToken());
+
+        RefreshToken old = tokenRepository.findByTokenHash(RefreshTokenService.sha256(issued.rawToken())).orElseThrow();
+        old.setReplacedAt(Instant.now().minusSeconds(120)); // grace(30초) 밖
+        tokenRepository.save(old);
+
+        assertThatThrownBy(() -> service.rotate(issued.rawToken()))
+                .isInstanceOf(ReuseDetectedException.class);
+
+        // 핵심(§1 롤백 버그 회귀 방지): 예외에도 불구하고 가족 폐기가 '커밋'되어 있어야 한다.
+        // 이 조회는 별도 트랜잭션 — 롤백됐다면 살아있는 토큰이 보인다.
+        assertThat(tokenRepository.findAll()).allMatch(RefreshToken::isRevoked);
+    }
+
+    @Test
+    void disabledUserAndExpiredFamilyAreRejected() {
+        User u = newUser();
+        var issued = service.issue(u, "kc-id", "kc-rt");
+        u.setEnabled(false);
+        userRepository.save(u);
+        assertThatThrownBy(() -> service.rotate(issued.rawToken()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        User u2 = newUser();
+        var issued2 = service.issue(u2, "kc-id", "kc-rt");
+        RefreshToken t = tokenRepository.findByTokenHash(RefreshTokenService.sha256(issued2.rawToken())).orElseThrow();
+        t.setFamilyCreatedAt(Instant.now().minusSeconds(7776000L + 60));
+        tokenRepository.save(t);
+        assertThatThrownBy(() -> service.rotate(issued2.rawToken()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void cleanupDeletesDeadFamiliesButKeepsLiveEvidence() {
+        User u = newUser();
+
+        // 죽은 가족: 모든 토큰의 expires_at 이 (now - 14일) 보다 과거 → 탐지 유효 기간도 끝남
+        RefreshToken dead = new RefreshToken(u.getId(), "dead-hash", java.util.UUID.randomUUID(),
+                null, null, Instant.now().minusSeconds(15L * 24 * 3600), Instant.now().minusSeconds(40L * 24 * 3600));
+        dead.setRevoked(true);
+        tokenRepository.save(dead);
+
+        // 산 가족: 최신 토큰이 살아있음 — 폐기된 옛 행(재사용 탐지 증거물)도 함께 보존돼야 한다
+        var issued = service.issue(u, "kc-id", "kc-rt");
+        service.rotate(issued.rawToken()); // 가족에 폐기 1 + 활성 1
+
+        cleanupJob.cleanup();
+
+        assertThat(tokenRepository.findAll())
+                .noneMatch(t -> "dead-hash".equals(t.getTokenHash()))  // 죽은 가족 삭제
+                .hasSize(2);                                            // 산 가족은 증거물 포함 전부 보존
+    }
+
+    @Test
+    void cleanupKeepsExpiredEvidenceRowWhileFamilyAlive() {
+        // 회귀 방지 핵심: 증거물 행의 '자체' 만료(15일 전)는 지났지만 형제 활성 토큰이 가족을 살려두는 상황.
+        // 행 단위 삭제로 퇴행하면 증거물이 지워져 이 테스트가 잡는다(가족 단위 삭제만 통과).
+        User u = newUser();
+        UUID family = UUID.randomUUID();
+        RefreshToken evidence = new RefreshToken(u.getId(), "evidence-hash", family, null, null,
+                Instant.now().minusSeconds(15L * 24 * 3600), Instant.now().minusSeconds(20L * 24 * 3600));
+        evidence.setRevoked(true);
+        tokenRepository.save(evidence);
+        RefreshToken active = new RefreshToken(u.getId(), "active-hash", family, null, null,
+                Instant.now().plusSeconds(14L * 24 * 3600), Instant.now().minusSeconds(20L * 24 * 3600));
+        tokenRepository.save(active);
+
+        cleanupJob.cleanup();
+
+        // 가족 MAX(expires_at)가 미래 → 가족 생존 → 만료된 증거물 행도 보존
+        assertThat(tokenRepository.findAll()).hasSize(2);
+    }
+}
