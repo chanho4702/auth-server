@@ -33,7 +33,7 @@ public class RefreshTokenService {
     public Issued issue(User user, String kcIdToken, String kcRefreshToken) {
         String raw = newRawToken();
         UUID familyId = UUID.randomUUID();
-        persist(user.getId(), raw, familyId, kcIdToken, kcRefreshToken);
+        persist(user.getId(), raw, familyId, kcIdToken, kcRefreshToken, Instant.now());
         return new Issued(raw, kcIdToken);
     }
 
@@ -62,7 +62,7 @@ public class RefreshTokenService {
 
         String newRaw = newRawToken();
         RefreshToken next = persist(user.getId(), newRaw, current.getFamilyId(),
-                current.getKcIdToken(), current.getKcRefreshToken());
+                current.getKcIdToken(), current.getKcRefreshToken(), current.getFamilyCreatedAt());
         current.setRevoked(true);
         current.setReplacedBy(next.getId());
         tokenRepository.save(current);
@@ -87,9 +87,11 @@ public class RefreshTokenService {
                 .orElse(null);
     }
 
-    private RefreshToken persist(Long userId, String raw, UUID familyId, String kcIdToken, String kcRefreshToken) {
+    private RefreshToken persist(Long userId, String raw, UUID familyId,
+                                 String kcIdToken, String kcRefreshToken, Instant familyCreatedAt) {
         RefreshToken token = new RefreshToken(
-                userId, sha256(raw), familyId, kcIdToken, kcRefreshToken, Instant.now().plusSeconds(ttlSeconds));
+                userId, sha256(raw), familyId, kcIdToken, kcRefreshToken,
+                Instant.now().plusSeconds(ttlSeconds), familyCreatedAt);
         return tokenRepository.save(token);
     }
 

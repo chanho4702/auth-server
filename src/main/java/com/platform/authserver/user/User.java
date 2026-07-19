@@ -35,6 +35,7 @@ public class User {
     @Setter
     private String provider;
 
+    @Setter
     @Column(nullable = false)
     private boolean enabled = true;
 

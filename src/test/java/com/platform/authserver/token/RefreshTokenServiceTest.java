@@ -9,7 +9,9 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -81,5 +83,19 @@ class RefreshTokenServiceTest {
                     assertThat(e.getUserId()).isEqualTo(u.getId());
                     assertThat(e.getFamilyId()).isNotNull();
                 });
+    }
+
+    @Test
+    void markRotatedClaimsTokenExactlyOnce() {
+        ReflectionTestUtils.setField(service, "ttlSeconds", 1209600L);
+        User u = newUser();
+        var issued = service.issue(u, "kc-id-token", "kc-refresh-token");
+        RefreshToken t = tokenRepository.findByTokenHash(RefreshTokenService.sha256(issued.rawToken())).orElseThrow();
+
+        int first = tokenRepository.markRotated(t.getId(), UUID.randomUUID(), Instant.now());
+        int second = tokenRepository.markRotated(t.getId(), UUID.randomUUID(), Instant.now());
+
+        assertThat(first).isEqualTo(1);   // 선점 성공
+        assertThat(second).isZero();      // 이미 선점됨 — 원자성의 근거
     }
 }
