@@ -68,4 +68,18 @@ class RefreshTokenServiceTest {
         assertThatThrownBy(() -> service.rotate("not-a-real-token"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void reuseDetectedExceptionCarriesUserAndFamily() {
+        ReflectionTestUtils.setField(service, "ttlSeconds", 1209600L);
+        User u = newUser();
+        var issued = service.issue(u, "kc-id-token", "kc-refresh-token");
+        service.rotate(issued.rawToken());
+
+        assertThatThrownBy(() -> service.rotate(issued.rawToken()))
+                .isInstanceOfSatisfying(ReuseDetectedException.class, e -> {
+                    assertThat(e.getUserId()).isEqualTo(u.getId());
+                    assertThat(e.getFamilyId()).isNotNull();
+                });
+    }
 }

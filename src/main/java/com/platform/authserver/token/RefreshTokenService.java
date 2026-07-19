@@ -37,7 +37,7 @@ public class RefreshTokenService {
         return new Issued(raw, kcIdToken);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = ReuseDetectedException.class)
     public Rotated rotate(String rawToken) {
         RefreshToken current = tokenRepository.findByTokenHash(sha256(rawToken))
                 .orElseThrow(() -> new IllegalArgumentException("알 수 없는 refresh token"));
@@ -46,7 +46,9 @@ public class RefreshTokenService {
             if (current.getReplacedBy() != null) {
                 // 폐기되고 이미 교체(superseded)된 토큰의 재사용 = 도난 → 패밀리 전체 폐기
                 tokenRepository.revokeFamily(current.getFamilyId());
-                throw new ReuseDetectedException("refresh token 재사용 탐지");
+                // noRollbackFor: 이 예외는 가족 폐기를 커밋한 채 전파되어야 한다(롤백되면 탐지가 무효).
+                throw new ReuseDetectedException("refresh token 재사용 탐지",
+                        current.getUserId(), current.getFamilyId());
             }
             // 패밀리 폐기로 부수적으로 무효화된 최신 토큰 → 단순 무효
             throw new IllegalArgumentException("유효하지 않은 refresh token");
