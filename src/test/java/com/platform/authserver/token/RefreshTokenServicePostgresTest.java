@@ -16,6 +16,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -153,5 +154,25 @@ class RefreshTokenServicePostgresTest {
         assertThat(tokenRepository.findAll())
                 .noneMatch(t -> "dead-hash".equals(t.getTokenHash()))  // 죽은 가족 삭제
                 .hasSize(2);                                            // 산 가족은 증거물 포함 전부 보존
+    }
+
+    @Test
+    void cleanupKeepsExpiredEvidenceRowWhileFamilyAlive() {
+        // 회귀 방지 핵심: 증거물 행의 '자체' 만료(15일 전)는 지났지만 형제 활성 토큰이 가족을 살려두는 상황.
+        // 행 단위 삭제로 퇴행하면 증거물이 지워져 이 테스트가 잡는다(가족 단위 삭제만 통과).
+        User u = newUser();
+        UUID family = UUID.randomUUID();
+        RefreshToken evidence = new RefreshToken(u.getId(), "evidence-hash", family, null, null,
+                Instant.now().minusSeconds(15L * 24 * 3600), Instant.now().minusSeconds(20L * 24 * 3600));
+        evidence.setRevoked(true);
+        tokenRepository.save(evidence);
+        RefreshToken active = new RefreshToken(u.getId(), "active-hash", family, null, null,
+                Instant.now().plusSeconds(14L * 24 * 3600), Instant.now().minusSeconds(20L * 24 * 3600));
+        tokenRepository.save(active);
+
+        cleanupJob.cleanup();
+
+        // 가족 MAX(expires_at)가 미래 → 가족 생존 → 만료된 증거물 행도 보존
+        assertThat(tokenRepository.findAll()).hasSize(2);
     }
 }
