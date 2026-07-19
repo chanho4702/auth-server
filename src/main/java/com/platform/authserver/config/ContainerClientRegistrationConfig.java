@@ -45,7 +45,9 @@ public class ContainerClientRegistrationConfig {
                 .authorizationUri(frontIssuer + "/protocol/openid-connect/auth") // 브라우저가 가는 곳
                 .tokenUri(backBase + "/protocol/openid-connect/token")
                 .jwkSetUri(backBase + "/protocol/openid-connect/certs")
-                .userInfoUri(backBase + "/protocol/openid-connect/userinfo")
+                // userInfoUri 설정 금지 — KC는 userinfo 요청 호스트를 토큰 iss(브라우저 호스트)와
+                // 대조하므로 백채널(keycloak:8080) 호출은 무조건 401(E2E 실측, 2026-07-19).
+                // 미설정 시 OidcUserService가 userinfo를 건너뛰고 ID 토큰 클레임으로 principal 구성.
                 .userNameAttributeName(IdTokenClaimNames.SUB) // 디스커버리 기본과 동일
                 .build();
         return new InMemoryClientRegistrationRepository(keycloak);

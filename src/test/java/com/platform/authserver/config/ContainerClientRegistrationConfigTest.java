@@ -45,11 +45,12 @@ class ContainerClientRegistrationConfigTest {
     }
 
     @Test
-    void userInfoUsesBackContainerDnsAndSubAttribute() {
+    void userInfoAbsentSoPrincipalComesFromIdToken() {
+        // KC는 userinfo 요청 호스트를 토큰 iss와 대조한다 — 백채널(keycloak:8080) 호출은 무조건 401.
+        // userInfoUri가 없으면 OidcUserService가 userinfo를 건너뛰고 ID 토큰 클레임으로 principal 구성.
         ClientRegistration.ProviderDetails provider = keycloakRegistration().getProviderDetails();
 
-        assertThat(provider.getUserInfoEndpoint().getUri())
-                .isEqualTo(BACK_BASE + "/protocol/openid-connect/userinfo");
+        assertThat(provider.getUserInfoEndpoint().getUri()).isNull();
         assertThat(provider.getUserInfoEndpoint().getUserNameAttributeName()).isEqualTo("sub");
     }
 
