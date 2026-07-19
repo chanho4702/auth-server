@@ -40,6 +40,12 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-data-jpa-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testRuntimeOnly 'com.h2database:h2'
+    // 실 PG 검증(Testcontainers) — 동시 rotate 경쟁, noRollbackFor 커밋, Flyway V1~V3는 H2로는 못 본다
+    // 주의: Spring Boot 4 관리 Testcontainers는 2.x — 아티팩트명이 'junit-jupiter'/'postgresql'이 아니라
+    // 'testcontainers-junit-jupiter'/'testcontainers-postgresql'로 개명됐다(1.x 관례와 다름, 실측).
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'
 }
 tasks.named('test') { useJUnitPlatform() }
 tasks.named('bootJar') { archiveFileName = 'app.jar' }
