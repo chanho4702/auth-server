@@ -41,6 +41,7 @@ class RefreshTokenServicePostgresTest {
     @Autowired RefreshTokenService service;
     @Autowired UserRepository userRepository;
     @Autowired RefreshTokenRepository tokenRepository;
+    @Autowired TokenCleanupJob cleanupJob;
 
     @AfterEach
     void clean() {
@@ -131,5 +132,26 @@ class RefreshTokenServicePostgresTest {
         tokenRepository.save(t);
         assertThatThrownBy(() -> service.rotate(issued2.rawToken()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void cleanupDeletesDeadFamiliesButKeepsLiveEvidence() {
+        User u = newUser();
+
+        // 죽은 가족: 모든 토큰의 expires_at 이 (now - 14일) 보다 과거 → 탐지 유효 기간도 끝남
+        RefreshToken dead = new RefreshToken(u.getId(), "dead-hash", java.util.UUID.randomUUID(),
+                null, null, Instant.now().minusSeconds(15L * 24 * 3600), Instant.now().minusSeconds(40L * 24 * 3600));
+        dead.setRevoked(true);
+        tokenRepository.save(dead);
+
+        // 산 가족: 최신 토큰이 살아있음 — 폐기된 옛 행(재사용 탐지 증거물)도 함께 보존돼야 한다
+        var issued = service.issue(u, "kc-id", "kc-rt");
+        service.rotate(issued.rawToken()); // 가족에 폐기 1 + 활성 1
+
+        cleanupJob.cleanup();
+
+        assertThat(tokenRepository.findAll())
+                .noneMatch(t -> "dead-hash".equals(t.getTokenHash()))  // 죽은 가족 삭제
+                .hasSize(2);                                            // 산 가족은 증거물 포함 전부 보존
     }
 }

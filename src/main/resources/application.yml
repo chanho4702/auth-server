@@ -52,3 +52,5 @@ platform:
   rotation-grace-seconds: ${ROTATION_GRACE_SECONDS:30}
   # 가족 생성 기준 절대 세션 상한(기본 90일) — sliding 만료의 영구 세션 방지
   session-absolute-ttl-seconds: ${SESSION_ABSOLUTE_TTL_SECONDS:7776000}
+  # RT 청소 배치 cron (기본 매일 04:00)
+  token-cleanup-cron: ${TOKEN_CLEANUP_CRON:0 0 4 * * *}
