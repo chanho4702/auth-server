@@ -1,0 +1,8 @@
+# dev 프로필 — 도커 풀스택과 나란히 실행 (포트 +10000). 인프라(postgres:5433·keycloak:8080)는 도커 그대로 재사용.
+# issuer/audience(=http://localhost:9000 / platform-api)는 문자열 계약이라 dev 클러스터 전체가 기본값 공유 → 오버라이드 안 함.
+server:
+  port: 19000
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:18761/eureka
