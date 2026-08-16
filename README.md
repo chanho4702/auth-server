@@ -4,12 +4,9 @@ Keycloak에 OIDC 로그인을 **위임**받아, 플랫폼 전용 **자체 RS256 
 myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서버가 발급한 JWT**만 들고 다닌다.
 게이트웨이(`gateway-server`, :8000) 뒤에서 `lb://auth-server`로 라우팅되고, eureka(:8761)에 자기등록한다.
 
-> 별도 git repo: `github.com/chanho4702/auth-server` (브랜치 `main`). 우산 repo(MSA_TEMPLATE)에서는 gitignore 됨.
-> 전체 토폴로지는 [`../README.md`](../README.md) 참고.
+> 별도 git repo: [chanho4702/auth-server](https://github.com/chanho4702/auth-server). 전체 토폴로지는 [infra-settings](https://github.com/chanho4702/infra-settings) 참고.
 
-## 핵심 성과
-
-> 2026.06 ~ 2026.07 · 1인 개발 · 39커밋 · 테스트 43개 전부 green
+## 설계 하이라이트
 
 - **RT 재사용 탐지를 "경쟁 조건에서도 성립"하게 만들었다** — check-and-set 사이의 동시 요청으로 탐지가 우회되거나(공격) 멀티탭 사용자가 도난으로 오판되던(강제 로그아웃) 문제를, 조건부 UPDATE **원자 선점** + **grace 30초**로 동시에 해소. 같은 토큰 2스레드 동시 refresh에서 정확히 1승 1패가 나오는 것을 **Testcontainers 실 Postgres 테스트로 증명**.
 - **보안 로직을 무력화하던 트랜잭션 버그를 발견·수정** — 도난 판정 시의 가족 폐기(`revokeFamily`)가 예외 롤백에 휩쓸려 실제로는 DB에 남지 않던 버그. H2 슬라이스 테스트는 전체가 한 트랜잭션이라 이 버그를 원리적으로 잡을 수 없음을 규명하고, `noRollbackFor` 수정 + 실 DB 별도-트랜잭션 커밋 검증 테스트로 회귀 방지.
@@ -41,7 +38,7 @@ myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서�
 
 ## 기술 스택
 
-`build.gradle` 실측:
+주요 구성:
 
 - **Spring Boot 4.0.6** · **Java 24**(Gradle toolchain) · **Gradle**
 - **Spring Cloud 2025.1.2** — eureka client
@@ -79,8 +76,6 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 프론트채널 `id_token_hint` 리다이렉트 방식은 id_token 만료 시 KC 세션을 못 끊어 "재로그인 즉시" 문제가 있어 폐기했다. 백채널 호출 실패해도 로컬 세션은 이미 정리됐으므로 로그아웃은 성공 처리(best-effort, 경고 로그만).
 
 ## API 엔드포인트
-
-컨트롤러 실측 기준.
 
 | 메서드 | 경로 | 인증 | 설명 |
 |---|---|---|---|
@@ -143,9 +138,9 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 
 `KeycloakLogoutClient`도 `KEYCLOAK_ISSUER_URI`(백채널 = 컨테이너 내부 DNS)로 end_session URL을 구성한다.
 
-## 실행 방법
+## 빠른 시작
 
-**전제:** Keycloak + Postgres가 먼저 떠 있어야 한다 → [`../infra/README.md`](../infra/README.md) 참고 (`cd infra/keycloak && docker compose up -d`).
+**전제:** Keycloak + Postgres가 먼저 떠 있어야 한다 → [infra README](https://github.com/chanho4702/infra-settings/blob/main/infra/README.md) 참고 (`cd infra/keycloak && docker compose up -d`).
 
 ### gradlew
 
@@ -179,7 +174,7 @@ docker build -t auth-server .         # eclipse-temurin:24-jre, EXPOSE 9000
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
-.\gradlew.bat test     # JUnit 전체 (13개 테스트 클래스, 43개 @Test — PG 테스트는 Docker 필요)
+.\gradlew.bat test     # JUnit 전체 — PostgreSQL 통합 테스트는 Docker 필요
 ```
 
 - H2 계열 테스트는 인메모리(`MODE=PostgreSQL`) + Hibernate `create-drop`을 쓰고 Flyway/실제 Keycloak에 의존하지 않는다(`application-test.yml`, `eureka.client.enabled=false`).
