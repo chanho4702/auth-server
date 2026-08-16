@@ -1,5 +1,11 @@
 # auth-server
 
+[![CI](https://github.com/chanho4702/auth-server/actions/workflows/ci.yml/badge.svg)](https://github.com/chanho4702/auth-server/actions/workflows/ci.yml)
+![Java](https://img.shields.io/badge/Java-24-ED8B00?logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.6-6DB33F?logo=springboot&logoColor=white)
+![Keycloak](https://img.shields.io/badge/Keycloak-OIDC-4D4D4D?logo=keycloak&logoColor=white)
+![JWT](https://img.shields.io/badge/JWT-RS256-000000?logo=jsonwebtokens&logoColor=white)
+
 Keycloak에 OIDC 로그인을 **위임**받아, 플랫폼 전용 **자체 RS256 JWT**를 발급하는 인증 서버(:9000).
 myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서버가 발급한 JWT**만 들고 다닌다.
 게이트웨이(`gateway-server`, :8000) 뒤에서 `lb://auth-server`로 라우팅되고, eureka(:8761)에 자기등록한다.
