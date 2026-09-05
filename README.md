@@ -110,6 +110,8 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 
 `/api/auth/tokens` 계열의 오류 응답은 auth 경로 관례대로 기계 코드다: `label_required`(400) · `invalid_expiry`(400) · `token_limit`(409) · `not_found`(404) · `pat_cannot_manage_tokens`(403). 한국어 문구 매핑은 프론트가 한다.
 
+외부 클라이언트용 사용 가이드(발급·헤더·오류·폐기·보안 권고)는 공개 문서 사이트 `/docs/` 의 **API 가이드 › 인증** 페이지에 있다. 원본 마크다운은 `myFront/docs/api-guide/10-authentication.md` 다(이 리포의 `docs/api/` 에서 옮겨 감).
+
 `pat_cannot_manage_tokens`(403)는 `/api/auth/tokens/**`와 `/api/auth/agents/**` 두 경로에 **같은 코드로** 적용된다 — 프론트가 한 갈래로 매핑하도록 통일했다. 판정은 컨트롤러가 아니라 `apiChain`의 `PatJwtGuardFilter`가 하므로 그 경로 아래 새 엔드포인트가 생겨도 자동으로 덮인다.
 
 > **`/api/auth/tokens/**`는 `SecurityConfig.apiChain`의 `securityMatcher`에 반드시 들어 있어야 한다.** 빠지면 `webChain`의 `/api/auth/**` permitAll로 떨어져 익명에게 열린다 — 이 프로젝트의 가장 날카로운 함정이라 회귀 테스트(`PersonalAccessTokenControllerTest.anonymous_list_is_unauthorized`)로 고정해 뒀다.
