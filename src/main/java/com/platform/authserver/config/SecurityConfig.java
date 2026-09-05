@@ -70,11 +70,11 @@ public class SecurityConfig {
     @Order(Ordered.HIGHEST_PRECEDENCE)
     SecurityFilterChain apiChain(HttpSecurity http, JwtAuthenticationConverter converter) throws Exception {
         http
-                .securityMatcher("/api/me", "/api/auth/agents", "/api/auth/tokens", "/api/auth/tokens/**")
+                .securityMatcher("/api/me", "/api/auth/agents", "/api/auth/agents/**", "/api/auth/tokens", "/api/auth/tokens/**")
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/agents").hasRole("ADMIN")
+                        .requestMatchers("/api/auth/agents", "/api/auth/agents/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
         return http.build();
@@ -84,16 +84,21 @@ public class SecurityConfig {
      * 게이트웨이가 라우팅하지 않는 클러스터 내부 전용 경로. JWT가 아니라
      * {@link InternalSecretFilter}가 인증을 전담하므로 authorizeHttpRequests는 permitAll —
      * 필터가 시크릿 불일치/미설정 시 403으로 직접 응답하고 체인을 끊는다.
+     *
+     * <p>{@code InternalSecretFilter}는 여기서 {@code new}로 직접 만든다(빈으로 등록하지
+     * 않음) — Boot가 {@code Filter} 빈을 서블릿 컨테이너 레벨(/*)에도 자동 등록하는 것을
+     * 피하기 위함(C1, 클래스 주석 참고). 이 체인에만 등록되는 지역 인스턴스다.
      */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 1)
-    SecurityFilterChain internalChain(HttpSecurity http, InternalSecretFilter internalSecretFilter) throws Exception {
+    SecurityFilterChain internalChain(HttpSecurity http,
+                                       @Value("${platform.agent.internal-secret:}") String internalSecret) throws Exception {
         http
                 .securityMatcher("/internal/**")
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                .addFilterBefore(internalSecretFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(new InternalSecretFilter(internalSecret), UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
