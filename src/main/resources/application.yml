@@ -52,8 +52,13 @@ platform:
   rotation-grace-seconds: ${ROTATION_GRACE_SECONDS:30}
   # 가족 생성 기준 절대 세션 상한(기본 90일) — sliding 만료의 영구 세션 방지
   session-absolute-ttl-seconds: ${SESSION_ABSOLUTE_TTL_SECONDS:7776000}
-  # RT 청소 배치 cron (기본 매일 04:00)
+  # RT 청소 배치 cron (기본 매일 04:00). PAT 청소 배치도 같은 cron을 쓴다.
   token-cleanup-cron: ${TOKEN_CLEANUP_CRON:0 0 4 * * *}
+  # PAT 교환으로 발급하는 JWT의 TTL. 세션 AT(900s)보다 짧게 둬서 폐기 후 잔존 시간을 줄인다.
+  pat-jwt-ttl-seconds: ${PAT_JWT_TTL_SECONDS:300}
+  # 만료·폐기된 PAT 행을 물리 삭제하기까지의 보존 기간(감사용).
+  pat-retention-days: ${PAT_RETENTION_DAYS:90}
   agent:
-    # /internal/service-tokens 게이트 시크릿. 비어있으면(미설정) 발급 경로 전체 차단(fail-closed).
+    # /internal/** 게이트 시크릿(/internal/service-tokens, /internal/pat/exchange).
+    # 비어있으면(미설정) 내부 경로 전체 차단(fail-closed) — 게이트웨이 PAT 교환도 함께 막힌다.
     internal-secret: ${AGENT_INTERNAL_SECRET:}

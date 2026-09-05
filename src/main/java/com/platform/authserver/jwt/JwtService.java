@@ -31,7 +31,17 @@ public class JwtService {
         this.ttlSeconds = ttlSeconds;
     }
 
+    /** 기본 AT TTL({@code platform.access-token-ttl-seconds})로 발급. */
     public String issueAccessToken(long userId, String email, String name, List<String> roles, String provider) {
+        return issueAccessToken(userId, email, name, roles, provider, ttlSeconds);
+    }
+
+    /**
+     * TTL을 호출부가 정하는 오버로드. PAT 교환({@code provider="PAT"})은 세션 AT보다 짧은
+     * TTL({@code platform.pat-jwt-ttl-seconds})을 쓴다 — 토큰 폐기 후 잔존 시간을 줄이기 위함.
+     */
+    public String issueAccessToken(long userId, String email, String name, List<String> roles, String provider,
+                                   long ttlSeconds) {
         Instant now = Instant.now();
         try {
             JWTClaimsSet claims = new JWTClaimsSet.Builder()

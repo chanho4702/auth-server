@@ -60,11 +60,17 @@ public class SecurityConfig {
         return converter;
     }
 
+    /**
+     * 자체 JWT 리소스서버 체인. {@code securityMatcher}에 나열된 경로만 이 체인이 잡는다 —
+     * {@code /api/auth/**} 아래 경로를 여기 빼먹으면 {@code webChain}의 permitAll로 떨어져
+     * 익명에게 열린다. {@code /api/auth/tokens/**}가 그 사례라 회귀 테스트로 고정해 뒀다
+     * ({@code PersonalAccessTokenControllerTest.anonymous_list_is_unauthorized}).
+     */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
     SecurityFilterChain apiChain(HttpSecurity http, JwtAuthenticationConverter converter) throws Exception {
         http
-                .securityMatcher("/api/me", "/api/auth/agents")
+                .securityMatcher("/api/me", "/api/auth/agents", "/api/auth/tokens", "/api/auth/tokens/**")
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth

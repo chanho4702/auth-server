@@ -27,6 +27,7 @@ myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서�
 | 동시성 해소 = **조건부 UPDATE 원자 선점** | 비관적 락(`PESSIMISTIC_WRITE`) | 락 없음·비차단·격리수준 무관. 락 방식은 유저 조회~INSERT까지 행 락을 쥐고, 락만으로는 멀티탭 오탐이 해소되지 않아 grace 분기가 어차피 필요 |
 | 로그아웃 = **백채널(서버-서버)** | 프론트채널 `id_token_hint` 리다이렉트 | 프론트채널은 id_token 만료 시 KC가 hint를 거부해 SSO 세션이 잔존("로그아웃 직후 비번 없이 재로그인" 실측) — 폐기하고 전환 |
 | RT 청소 = **가족 단위 배치** | 행 단위 만료 삭제 | 폐기된 옛 행은 재사용 탐지의 증거물 — 행 단위로 지우면 도난 토큰이 단순 401로 강등됨. 보존 기간 = 탐지 유효 기간 |
+| PAT = **게이트웨이에서 짧은 JWT로 교환** | 리소스서버가 PAT를 직접 검증 | 리소스 서버(wiki·alm·org·board)를 한 줄도 안 고치고 외부 클라이언트 인증을 얹는다. 서비스는 지금처럼 JWT만 보고, PAT를 아는 곳은 auth-server와 게이트웨이 필터뿐 |
 
 ---
 
@@ -90,6 +91,15 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | POST | `/api/auth/refresh` | RT 쿠키 | RT 회전 + 새 Access Token `{accessToken}` 발급. 쿠키 없으면 401 `{error:"no_refresh_token"}` — `AuthController` |
 | POST | `/api/auth/logout` | RT 쿠키 | 토큰 패밀리 폐기 + **KC SSO 세션 백채널 종료** + 쿠키 삭제. 응답 `{}` — `AuthController` |
 | GET | `/api/me` | Bearer(자체 JWT) | 토큰 claim 기반 사용자 정보 `{sub,email,name,role,provider}`(role=roles 첫 원소) — `MeController` |
+| GET | `/api/auth/tokens` | Bearer(자체 JWT) | 내 개인 API 토큰 목록 `[{id,label,hint,createdAt,expiresAt,lastUsedAt,revokedAt}]` 최신순 — `PersonalAccessTokenController` |
+| POST | `/api/auth/tokens` | Bearer(자체 JWT) | PAT 발급. 요청 `{label(1~100), expiresInDays(1~365, 기본 90)}` → 201 `{id,label,hint,createdAt,expiresAt,token}`. **`token`(원문)은 이 응답에만 실린다** |
+| DELETE | `/api/auth/tokens/{id}` | Bearer(자체 JWT) | PAT 폐기 → 204. 이미 폐기면 그대로 204(멱등), 남의 토큰이면 404 |
+| POST | `/internal/pat/exchange` | `X-Internal-Secret` | 게이트웨이 전용. `{"token":"chanho_pat_…"}` → 200 `{accessToken, expiresInSeconds}` 또는 401 `{"error":"invalid_token"}` — `PatExchangeController` |
+| POST | `/internal/service-tokens` | `X-Internal-Secret` | 에이전트 페르소나 사용자용 AT 발급 — `AgentTokenController` |
+
+`/api/auth/tokens` 계열의 오류 응답은 auth 경로 관례대로 기계 코드다: `label_required`(400) · `invalid_expiry`(400) · `token_limit`(409) · `not_found`(404) · `pat_cannot_manage_tokens`(403). 한국어 문구 매핑은 프론트가 한다.
+
+> **`/api/auth/tokens/**`는 `SecurityConfig.apiChain`의 `securityMatcher`에 반드시 들어 있어야 한다.** 빠지면 `webChain`의 `/api/auth/**` permitAll로 떨어져 익명에게 열린다 — 이 프로젝트의 가장 날카로운 함정이라 회귀 테스트(`PersonalAccessTokenControllerTest.anonymous_list_is_unauthorized`)로 고정해 뒀다.
 
 브라우저에서는 게이트웨이(:8000) 경유로 접근한다(예: 로그인 시작 = `http://localhost:8000/oauth2/authorization/keycloak`). 게이트웨이는 `/oauth2/**`·`/login/**`·`/api/auth/**`·`/.well-known/**`·`/api/me`를 경로 그대로(No StripPrefix) auth-server로 라우팅한다.
 
@@ -102,6 +112,7 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 - **audience 검증**: `JwtDecoder`가 서명·`iss`(`platform.issuer`)뿐 아니라 **`aud`(`platform.audience`=`platform-api`)까지 검증**한다. 다른 발급자·다른 대상의 토큰 거부. board-service 등 리소스서버도 같은 `aud`를 검증한다.
 - **역할 매핑**: `/api/me` 리소스서버 체인은 `roles` claim을 `ROLE_` 접두사 권한으로 변환.
 - **백채널 로그아웃**: RT 행에 Keycloak `id_token`·`refresh_token`을 함께 보관(V2 마이그레이션, rotate 시 패밀리 내내 승계). 로그아웃 시 KC `refresh_token`으로 end_session 서버-서버 호출.
+- **개인 API 토큰(PAT)**: `chanho_pat_` + base64url(SecureRandom 32바이트) = 54자. 접두사로 게이트웨이가 PAT임을 판별한다. **DB에는 SHA-256 해시만**(RT와 같은 `RefreshTokenService.sha256`) + 목록 식별용 `token_hint`(원문 뒤 4자). 원문은 발급 응답에 한 번만 실리고 다시 조회할 수 없다. 만료는 필수(1~365일, 기본 90일 — 무기한 토큰 없음), 사용자당 활성 25개, 폐기는 행 삭제가 아니라 `revoked_at` 세팅(감사)이고 90일 뒤 `PatCleanupJob`이 물리 삭제한다. 게이트웨이가 `/internal/pat/exchange`로 PAT를 **TTL 300초 플랫폼 JWT**(`provider=PAT`)로 바꿔 내려보내므로 리소스 서버는 지금처럼 JWT만 본다. `provider=PAT` JWT로는 토큰 관리 API를 쓸 수 없다(403 `pat_cannot_manage_tokens`) — 토큰 하나가 새 토큰을 무한히 낳는 것을 막는다. `last_used_at`은 60초에 한 번만 갱신한다(게이트웨이 캐시 TTL과 정렬).
 
 ## 서명 키 — `auth-jwk.json`
 
@@ -133,7 +144,10 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | `platform.jwk-path` | - | `./auth-jwk.json` | 서명 키 파일 경로 |
 | `platform.rotation-grace-seconds` | `ROTATION_GRACE_SECONDS` | `30` | RT 회전 경쟁(멀티탭) 관용 창 — 이내 재사용은 도난 아님 |
 | `platform.session-absolute-ttl-seconds` | `SESSION_ABSOLUTE_TTL_SECONDS` | `7776000` | 가족 생성 기준 절대 세션 상한(90일) |
-| `platform.token-cleanup-cron` | `TOKEN_CLEANUP_CRON` | `0 0 4 * * *` | RT 청소 배치 주기 |
+| `platform.token-cleanup-cron` | `TOKEN_CLEANUP_CRON` | `0 0 4 * * *` | RT·PAT 청소 배치 주기 |
+| `platform.pat-jwt-ttl-seconds` | `PAT_JWT_TTL_SECONDS` | `300` (5분) | PAT 교환으로 발급하는 JWT의 TTL. 세션 AT(900s)보다 짧게 둬 폐기 후 잔존 시간을 줄인다 |
+| `platform.pat-retention-days` | `PAT_RETENTION_DAYS` | `90` | 만료·폐기된 PAT 행을 물리 삭제하기까지의 보존 기간(감사용) |
+| `platform.agent.internal-secret` | `AGENT_INTERNAL_SECRET` | (빈 문자열) | `/internal/**` 게이트 시크릿. **PAT 교환에 필수** — 비어 있으면 `InternalSecretFilter`가 내부 경로를 전부 403으로 막고(fail-closed) 게이트웨이의 PAT 교환도 함께 죽는다. auth-server와 gateway-server에 **같은 값**을 주입한다(`openssl rand -hex 32`) |
 
 ### docker 프로필 — split-horizon OIDC
 
@@ -186,6 +200,7 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
 - H2 계열 테스트는 인메모리(`MODE=PostgreSQL`) + Hibernate `create-drop`을 쓰고 Flyway/실제 Keycloak에 의존하지 않는다(`application-test.yml`, `eureka.client.enabled=false`).
 - `@SpringBootTest`는 `TestOAuth2ClientConfig`(오프라인 `ClientRegistrationRepository`)를 import해 Keycloak 없이 컨텍스트가 뜬다(`@ConditionalOnMissingBean`으로 discovery 백오프).
 - **`RefreshTokenServicePostgresTest`는 Testcontainers 실 Postgres(postgres:16)로 돈다** — H2가 원리적으로 못 보는 것만 검증: 2스레드 동시 rotate 경쟁(정확히 1승 1패), `noRollbackFor` 커밋 동작(예외 후 별도 트랜잭션에서 가족 폐기 확인), Flyway V1~V3 실측, 청소 배치의 증거물 보존 판별. `@ActiveProfiles("test")`를 쓰지 않는 것이 핵심(test 프로필은 H2+Flyway off로 바꿔버림).
+- **`PersonalAccessTokenPostgresTest`도 Testcontainers 실 Postgres**로 돈다 — Flyway V4 적용과 그 스키마가 `ddl-auto=validate`를 통과하는지(컨텍스트가 뜬다는 사실 자체가 검증), 그리고 청소 배치가 활성·최근 폐기 토큰을 남기는지. H2 create-drop 스위트는 마이그레이션을 아예 타지 않아 이걸 못 본다.
 - `KeycloakLogoutClientTest`는 무응답 서버(ServerSocket)로 KC 행(hang) 시나리오를 재현해 타임아웃(connect 2s/read 3s) 복귀를 검증한다.
 
 ## 프로젝트 구조
@@ -202,15 +217,24 @@ auth-server/
    ├─ user/      User · UserRepository · UserService                (JIT 프로비저닝)
    ├─ token/     RefreshToken(+Repository) · RefreshTokenService · CookieFactory · TokenCleanupJob
    │             ReuseDetectedException(도난) · ConcurrentRotationException(멀티탭 경쟁 — 관용)
+   ├─ pat/       PersonalAccessToken(+Repository) · PersonalAccessTokenService · PatCleanupJob
+   │             PersonalAccessTokenController(/api/auth/tokens) · PatExchangeController(/internal/pat/exchange)
    ├─ auth/      OidcClaims · LoginSuccessHandler · AuthController · MeController · KeycloakLogoutClient
    └─ config/    SecurityConfig(+토큰 교환 타임아웃 빈) · ContainerClientRegistrationConfig (docker split-horizon)
 src/main/resources/db/migration/
 ├─ V1__init.sql                                             (users, refresh_tokens)
 ├─ V2__add_kc_refresh_token.sql                             (백채널 로그아웃용 kc_refresh_token 컬럼)
-└─ V3__rotation_grace_and_absolute_expiry.sql               (replaced_at=grace 판정 · family_created_at=절대 상한)
+├─ V3__rotation_grace_and_absolute_expiry.sql               (replaced_at=grace 판정 · family_created_at=절대 상한)
+└─ V4__personal_access_tokens.sql                           (personal_access_tokens — 개인 API 토큰)
 ```
 
-보안 필터체인 2개(`SecurityConfig`): `/api/me` = 자체 JWT 리소스서버(stateless, iss+aud 검증), 그 외 = oauth2Login + `/api/auth/**`·`/.well-known/**`·`/error` permitAll.
+보안 필터체인 3개(`SecurityConfig`, 순서대로):
+
+1. `apiChain` — 자체 JWT 리소스서버(stateless, iss+aud 검증). `securityMatcher`에 **나열된 경로만** 잡는다: `/api/me` · `/api/auth/agents`(ROLE_ADMIN) · `/api/auth/tokens`·`/api/auth/tokens/**`.
+2. `internalChain` — `/internal/**`. JWT가 아니라 `InternalSecretFilter`(상수시간 시크릿 비교, 미설정 시 fail-closed)가 인증을 전담한다.
+3. `webChain` — 그 외 전부. oauth2Login + `/api/auth/**`·`/.well-known/**`·`/error` permitAll.
+
+`/api/auth/**` 아래에 인증이 필요한 경로를 새로 만들 때는 1번의 `securityMatcher`에 반드시 추가한다 — 빼먹으면 3번의 permitAll로 떨어져 조용히 익명에게 열린다.
 
 ## 다른 서비스와의 연동
 
