@@ -58,6 +58,12 @@ platform:
   pat-jwt-ttl-seconds: ${PAT_JWT_TTL_SECONDS:300}
   # 만료·폐기된 PAT 행을 물리 삭제하기까지의 보존 기간(감사용).
   pat-retention-days: ${PAT_RETENTION_DAYS:90}
+  org:
+    # org-service 서비스 간 API(/internal/org/**). 초대 확인·수락은 로그인 도중에 일어나
+    # 사용자 토큰이 없으므로 이 토큰이 유일한 인증이다. 비어 있으면 초대 링크는 그냥
+    # 평소 로그인으로 흘러가고(안내 페이지), 이메일 대조 경로만 남는다.
+    service-uri: ${ORG_SERVICE_URI:http://localhost:9130}
+    internal-token: ${ORG_INTERNAL_TOKEN:}
   agent:
     # /internal/** 게이트 시크릿(/internal/service-tokens, /internal/pat/exchange).
     # 비어있으면(미설정) 내부 경로 전체 차단(fail-closed) — 게이트웨이 PAT 교환도 함께 막힌다.

@@ -2,6 +2,7 @@ package com.platform.authserver.config;
 
 import com.platform.authserver.agent.InternalSecretFilter;
 import com.platform.authserver.auth.LoginSuccessHandler;
+import com.platform.authserver.invite.InviteLoginHintResolver;
 import com.platform.authserver.jwt.JwtKeyProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -16,6 +17,7 @@ import org.springframework.security.oauth2.client.endpoint.OAuth2AccessTokenResp
 import org.springframework.security.oauth2.client.endpoint.OAuth2AuthorizationCodeGrantRequest;
 import org.springframework.security.oauth2.client.endpoint.RestClientAuthorizationCodeTokenResponseClient;
 import org.springframework.security.oauth2.client.http.OAuth2ErrorResponseErrorHandler;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -102,15 +104,25 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /**
+     * {@code /invite/**}는 로그인 <b>전</b>에 열려야 한다 — 초대 링크를 타고 온 사람은 아직 계정이
+     * 없거나 로그인하지 않은 상태다. 이 경로는 토큰을 세션에 담고 Keycloak 로그인으로 보내기만 한다.
+     *
+     * <p>인가 요청 resolver를 갈아 끼우는 것은 그 세션 값으로 {@code login_hint}를 붙이기 위해서다.
+     */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 2)
-    SecurityFilterChain webChain(HttpSecurity http, LoginSuccessHandler successHandler) throws Exception {
+    SecurityFilterChain webChain(HttpSecurity http, LoginSuccessHandler successHandler,
+                                 ClientRegistrationRepository clientRegistrations) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**", "/.well-known/**", "/error").permitAll()
+                        .requestMatchers("/api/auth/**", "/.well-known/**", "/invite/**", "/error").permitAll()
                         .anyRequest().authenticated())
-                .oauth2Login(oauth2 -> oauth2.successHandler(successHandler));
+                .oauth2Login(oauth2 -> oauth2
+                        .authorizationEndpoint(endpoint -> endpoint.authorizationRequestResolver(
+                                new InviteLoginHintResolver(clientRegistrations, "/oauth2/authorization")))
+                        .successHandler(successHandler));
         return http.build();
     }
 

@@ -43,7 +43,10 @@ class MeControllerTest {
                 .andExpect(jsonPath("$.email").value("alice@demo.com"))
                 .andExpect(jsonPath("$.name").value("Alice"))
                 .andExpect(jsonPath("$.provider").value("GOOGLE"))
-                .andExpect(jsonPath("$.role").value("USER"));
+                .andExpect(jsonPath("$.role").value("USER"))
+                // roles 는 확장 필드다 — 기존 role(첫 역할 하나)은 그대로 둔다
+                .andExpect(jsonPath("$.roles[0]").value("USER"))
+                .andExpect(jsonPath("$.roles[1]").value("ADMIN"));
     }
 
     @Test

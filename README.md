@@ -90,12 +90,23 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | GET | `/.well-known/jwks.json` | - | 서명 공개키(JWK Set) — `JwksController` |
 | POST | `/api/auth/refresh` | RT 쿠키 | RT 회전 + 새 Access Token `{accessToken}` 발급. 쿠키 없으면 401 `{error:"no_refresh_token"}` — `AuthController` |
 | POST | `/api/auth/logout` | RT 쿠키 | 토큰 패밀리 폐기 + **KC SSO 세션 백채널 종료** + 쿠키 삭제. 응답 `{}` — `AuthController` |
-| GET | `/api/me` | Bearer(자체 JWT) | 토큰 claim 기반 사용자 정보 `{sub,email,name,role,provider}`(role=roles 첫 원소) — `MeController` |
+| GET | `/invite/{token}` | - | 초대 링크 착지(U1). org 내부 API로 토큰을 확인해 살아 있으면 세션에 담고 `/oauth2/authorization/keycloak`으로 302(초대받은 이메일이 `login_hint`로 붙는다). 무효·만료면 한국어 안내 HTML 200 — `InviteController` |
+| GET | `/api/me` | Bearer(자체 JWT) | 토큰 claim 기반 사용자 정보 `{sub,email,name,role,provider,roles[]}`(`role`=roles 첫 원소, `roles`=전체 배열) — `MeController` |
 | GET | `/api/auth/tokens` | Bearer(자체 JWT) | 내 개인 API 토큰 목록 `[{id,label,hint,createdAt,expiresAt,lastUsedAt,revokedAt}]` 최신순 — `PersonalAccessTokenController` |
 | POST | `/api/auth/tokens` | Bearer(자체 JWT) | PAT 발급. 요청 `{label(1~100), expiresInDays(1~365, 기본 90)}` → 201 `{id,label,hint,createdAt,expiresAt,token}`. **`token`(원문)은 이 응답에만 실린다** |
 | DELETE | `/api/auth/tokens/{id}` | Bearer(자체 JWT) | PAT 폐기 → 204. 이미 폐기면 그대로 204(멱등), 남의 토큰이면 404 |
 | POST | `/internal/pat/exchange` | `X-Internal-Secret` | 게이트웨이 전용. `{"token":"chanho_pat_…"}` → 200 `{accessToken, expiresInSeconds}` 또는 401 `{"error":"invalid_token"}` — `PatExchangeController` |
 | POST | `/internal/service-tokens` | `X-Internal-Secret` | 에이전트 페르소나 사용자용 AT 발급 — `AgentTokenController` |
+
+> **전역 관리자 판정은 `/api/me`가 아니다.** 여기 `roles`는 Keycloak realm 역할이고, 플랫폼 관리자 여부는
+> `GET /api/org/me`의 `globalRoles`(org-service)로 본다 — auth-server는 org를 모른다.
+
+**초대 흐름(U1)**은 두 지점을 지난다. `/invite/{token}`이 토큰을 세션에 담고, 로그인이 끝난 뒤
+`LoginSuccessHandler`가 org 내부 API `POST /internal/org/invitations/accept`로 수락을 알린다 —
+그 시점이 사용자 id가 처음 생기는 순간이기 때문이다. **이 호출이 실패해도 로그인은 계속된다**(org 쪽에
+이메일 대조 경로가 남아 있고, org가 잠깐 안 뜬다고 로그인을 막을 이유가 없다). 세션의 초대 토큰은
+성공·실패와 무관하게 일회용으로 지운다. `ORG_SERVICE_URI`(기본 `http://localhost:9130`)와
+`ORG_INTERNAL_TOKEN`(비면 초대 확인·수락 모두 생략)으로 설정한다.
 
 `/api/auth/tokens` 계열의 오류 응답은 auth 경로 관례대로 기계 코드다: `label_required`(400) · `invalid_expiry`(400) · `token_limit`(409) · `not_found`(404) · `pat_cannot_manage_tokens`(403). 한국어 문구 매핑은 프론트가 한다.
 
