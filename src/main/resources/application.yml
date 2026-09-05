@@ -54,3 +54,6 @@ platform:
   session-absolute-ttl-seconds: ${SESSION_ABSOLUTE_TTL_SECONDS:7776000}
   # RT 청소 배치 cron (기본 매일 04:00)
   token-cleanup-cron: ${TOKEN_CLEANUP_CRON:0 0 4 * * *}
+  agent:
+    # /internal/service-tokens 게이트 시크릿. 비어있으면(미설정) 발급 경로 전체 차단(fail-closed).
+    internal-secret: ${AGENT_INTERNAL_SECRET:}

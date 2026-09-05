@@ -1,5 +1,6 @@
 package com.platform.authserver.config;
 
+import com.platform.authserver.agent.InternalSecretFilter;
 import com.platform.authserver.auth.LoginSuccessHandler;
 import com.platform.authserver.jwt.JwtKeyProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +27,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
@@ -62,16 +64,35 @@ public class SecurityConfig {
     @Order(Ordered.HIGHEST_PRECEDENCE)
     SecurityFilterChain apiChain(HttpSecurity http, JwtAuthenticationConverter converter) throws Exception {
         http
-                .securityMatcher("/api/me")
+                .securityMatcher("/api/me", "/api/auth/agents")
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/auth/agents").hasRole("ADMIN")
+                        .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
         return http.build();
     }
 
+    /**
+     * 게이트웨이가 라우팅하지 않는 클러스터 내부 전용 경로. JWT가 아니라
+     * {@link InternalSecretFilter}가 인증을 전담하므로 authorizeHttpRequests는 permitAll —
+     * 필터가 시크릿 불일치/미설정 시 403으로 직접 응답하고 체인을 끊는다.
+     */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 1)
+    SecurityFilterChain internalChain(HttpSecurity http, InternalSecretFilter internalSecretFilter) throws Exception {
+        http
+                .securityMatcher("/internal/**")
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable())
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .addFilterBefore(internalSecretFilter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 2)
     SecurityFilterChain webChain(HttpSecurity http, LoginSuccessHandler successHandler) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
