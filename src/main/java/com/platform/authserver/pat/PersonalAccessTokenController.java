@@ -23,14 +23,15 @@ import java.util.UUID;
  * {@code securityMatcher}에 반드시 들어 있어야 한다. 빠지면 {@code webChain}의
  * {@code /api/auth/**} permitAll로 떨어져 익명 사용자에게 열린다(회귀 테스트로 고정).
  *
+ * <p>PAT 교환 JWT({@code provider=PAT})의 차단은 이 컨트롤러가 아니라
+ * {@link PatJwtGuardFilter}가 체인에서 한다 — 경로별로 복붙하면 새 엔드포인트에서 빠지기 때문이다.
+ *
  * <p>오류 계약은 auth 경로 관례대로 기계 코드 {@code {"error":"..."}}다 — 한국어 문구 매핑은
  * 프론트가 한다.
  */
 @RestController
 @RequestMapping("/api/auth/tokens")
 public class PersonalAccessTokenController {
-
-    private static final String PAT_PROVIDER = "PAT";
 
     private final PersonalAccessTokenService tokenService;
 
@@ -55,21 +56,12 @@ public class PersonalAccessTokenController {
 
     @GetMapping
     public ResponseEntity<?> list(@AuthenticationPrincipal Jwt jwt) {
-        ResponseEntity<?> rejected = rejectPatJwt(jwt);
-        if (rejected != null) {
-            return rejected;
-        }
         List<TokenView> body = tokenService.list(userId(jwt)).stream().map(TokenView::of).toList();
         return ResponseEntity.ok(body);
     }
 
     @PostMapping
     public ResponseEntity<?> create(@AuthenticationPrincipal Jwt jwt, @RequestBody(required = false) CreateRequest request) {
-        ResponseEntity<?> rejected = rejectPatJwt(jwt);
-        if (rejected != null) {
-            return rejected;
-        }
-
         String label = request == null || request.label() == null ? null : request.label().trim();
         if (label == null || label.isEmpty() || label.length() > PersonalAccessTokenService.MAX_LABEL_LENGTH) {
             return error(HttpStatus.BAD_REQUEST, "label_required");
@@ -91,10 +83,6 @@ public class PersonalAccessTokenController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> revoke(@AuthenticationPrincipal Jwt jwt, @PathVariable String id) {
-        ResponseEntity<?> rejected = rejectPatJwt(jwt);
-        if (rejected != null) {
-            return rejected;
-        }
         UUID tokenId;
         try {
             tokenId = UUID.fromString(id);
@@ -114,17 +102,6 @@ public class PersonalAccessTokenController {
     @ExceptionHandler(TokenLimitExceededException.class)
     ResponseEntity<?> handleLimit(TokenLimitExceededException e) {
         return error(HttpStatus.CONFLICT, "token_limit");
-    }
-
-    /**
-     * PAT로 교환한 JWT({@code provider=PAT})로는 토큰 관리를 못 한다 — 토큰 하나가 새 토큰을
-     * 무한히 낳는 것을 막는다. 관리 API는 사람이 로그인한 세션 JWT로만 쓴다.
-     */
-    private ResponseEntity<?> rejectPatJwt(Jwt jwt) {
-        if (PAT_PROVIDER.equals(jwt.getClaimAsString("provider"))) {
-            return error(HttpStatus.FORBIDDEN, "pat_cannot_manage_tokens");
-        }
-        return null;
     }
 
     private long userId(Jwt jwt) {

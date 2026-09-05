@@ -4,6 +4,7 @@ import com.platform.authserver.agent.InternalSecretFilter;
 import com.platform.authserver.auth.LoginSuccessHandler;
 import com.platform.authserver.invite.InviteLoginHintResolver;
 import com.platform.authserver.jwt.JwtKeyProvider;
+import com.platform.authserver.pat.PatJwtGuardFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,6 +30,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.client.RestClient;
 
@@ -67,6 +69,13 @@ public class SecurityConfig {
      * {@code /api/auth/**} 아래 경로를 여기 빼먹으면 {@code webChain}의 permitAll로 떨어져
      * 익명에게 열린다. {@code /api/auth/tokens/**}가 그 사례라 회귀 테스트로 고정해 뒀다
      * ({@code PersonalAccessTokenControllerTest.anonymous_list_is_unauthorized}).
+     *
+     * <p>{@link PatJwtGuardFilter}는 이 체인 안에서 PAT 교환 JWT의 자기 증식 경로
+     * ({@code /api/auth/tokens/**}, {@code /api/auth/agents/**})를 막는다. 인가 판정
+     * ({@code AuthorizationFilter}) 앞에 두어 PAT 요청이 "권한 없음"보다 구체적인
+     * {@code pat_cannot_manage_tokens} 이유를 받게 한다. {@code /api/me}는 목록에 없으므로
+     * PAT로 정상 호출된다. {@code InternalSecretFilter}와 같은 이유로 빈이 아니라
+     * {@code new}로 만든다(Boot의 서블릿 레벨 자동 등록 회피).
      */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -78,7 +87,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/agents", "/api/auth/agents/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)))
+                .addFilterBefore(new PatJwtGuardFilter(), AuthorizationFilter.class);
         return http.build();
     }
 

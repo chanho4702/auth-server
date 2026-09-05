@@ -110,6 +110,8 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 
 `/api/auth/tokens` 계열의 오류 응답은 auth 경로 관례대로 기계 코드다: `label_required`(400) · `invalid_expiry`(400) · `token_limit`(409) · `not_found`(404) · `pat_cannot_manage_tokens`(403). 한국어 문구 매핑은 프론트가 한다.
 
+`pat_cannot_manage_tokens`(403)는 `/api/auth/tokens/**`와 `/api/auth/agents/**` 두 경로에 **같은 코드로** 적용된다 — 프론트가 한 갈래로 매핑하도록 통일했다. 판정은 컨트롤러가 아니라 `apiChain`의 `PatJwtGuardFilter`가 하므로 그 경로 아래 새 엔드포인트가 생겨도 자동으로 덮인다.
+
 > **`/api/auth/tokens/**`는 `SecurityConfig.apiChain`의 `securityMatcher`에 반드시 들어 있어야 한다.** 빠지면 `webChain`의 `/api/auth/**` permitAll로 떨어져 익명에게 열린다 — 이 프로젝트의 가장 날카로운 함정이라 회귀 테스트(`PersonalAccessTokenControllerTest.anonymous_list_is_unauthorized`)로 고정해 뒀다.
 
 브라우저에서는 게이트웨이(:8000) 경유로 접근한다(예: 로그인 시작 = `http://localhost:8000/oauth2/authorization/keycloak`). 게이트웨이는 `/oauth2/**`·`/login/**`·`/api/auth/**`·`/.well-known/**`·`/api/me`를 경로 그대로(No StripPrefix) auth-server로 라우팅한다.
@@ -123,7 +125,7 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 - **audience 검증**: `JwtDecoder`가 서명·`iss`(`platform.issuer`)뿐 아니라 **`aud`(`platform.audience`=`platform-api`)까지 검증**한다. 다른 발급자·다른 대상의 토큰 거부. board-service 등 리소스서버도 같은 `aud`를 검증한다.
 - **역할 매핑**: `/api/me` 리소스서버 체인은 `roles` claim을 `ROLE_` 접두사 권한으로 변환.
 - **백채널 로그아웃**: RT 행에 Keycloak `id_token`·`refresh_token`을 함께 보관(V2 마이그레이션, rotate 시 패밀리 내내 승계). 로그아웃 시 KC `refresh_token`으로 end_session 서버-서버 호출.
-- **개인 API 토큰(PAT)**: `chanho_pat_` + base64url(SecureRandom 32바이트) = 54자. 접두사로 게이트웨이가 PAT임을 판별한다. **DB에는 SHA-256 해시만**(RT와 같은 `RefreshTokenService.sha256`) + 목록 식별용 `token_hint`(원문 뒤 4자). 원문은 발급 응답에 한 번만 실리고 다시 조회할 수 없다. 만료는 필수(1~365일, 기본 90일 — 무기한 토큰 없음), 사용자당 활성 25개, 폐기는 행 삭제가 아니라 `revoked_at` 세팅(감사)이고 90일 뒤 `PatCleanupJob`이 물리 삭제한다. 게이트웨이가 `/internal/pat/exchange`로 PAT를 **TTL 300초 플랫폼 JWT**(`provider=PAT`)로 바꿔 내려보내므로 리소스 서버는 지금처럼 JWT만 본다. `provider=PAT` JWT로는 토큰 관리 API를 쓸 수 없다(403 `pat_cannot_manage_tokens`) — 토큰 하나가 새 토큰을 무한히 낳는 것을 막는다. `last_used_at`은 60초에 한 번만 갱신한다(게이트웨이 캐시 TTL과 정렬).
+- **개인 API 토큰(PAT)**: `chanho_pat_` + base64url(SecureRandom 32바이트) = 54자. 접두사로 게이트웨이가 PAT임을 판별한다. **DB에는 SHA-256 해시만**(RT와 같은 `RefreshTokenService.sha256`) + 목록 식별용 `token_hint`(원문 뒤 4자). 원문은 발급 응답에 한 번만 실리고 다시 조회할 수 없다. 만료는 필수(1~365일, 기본 90일 — 무기한 토큰 없음), 사용자당 활성 25개, 폐기는 행 삭제가 아니라 `revoked_at` 세팅(감사)이고 90일 뒤 `PatCleanupJob`이 물리 삭제한다. 게이트웨이가 `/internal/pat/exchange`로 PAT를 **TTL 300초 플랫폼 JWT**(`provider=PAT`)로 바꿔 내려보내므로 리소스 서버는 지금처럼 JWT만 본다. `provider=PAT` JWT로는 토큰 관리 API(`/api/auth/tokens/**`)도 에이전트 페르소나 생성(`/api/auth/agents/**`)도 쓸 수 없다(403 `pat_cannot_manage_tokens`) — 토큰이 새 토큰을 낳거나, 페르소나를 거쳐 서비스 토큰을 받아내는 우회를 막는다. `/api/me`를 비롯한 나머지 API는 PAT로 정상 호출된다. `last_used_at`은 60초에 한 번만 갱신한다(게이트웨이 캐시 TTL과 정렬).
 
 ## 서명 키 — `auth-jwk.json`
 
@@ -230,6 +232,7 @@ auth-server/
    │             ReuseDetectedException(도난) · ConcurrentRotationException(멀티탭 경쟁 — 관용)
    ├─ pat/       PersonalAccessToken(+Repository) · PersonalAccessTokenService · PatCleanupJob
    │             PersonalAccessTokenController(/api/auth/tokens) · PatExchangeController(/internal/pat/exchange)
+   │             PatJwtGuardFilter (provider=PAT JWT를 tokens·agents 경로에서 차단)
    ├─ auth/      OidcClaims · LoginSuccessHandler · AuthController · MeController · KeycloakLogoutClient
    └─ config/    SecurityConfig(+토큰 교환 타임아웃 빈) · ContainerClientRegistrationConfig (docker split-horizon)
 src/main/resources/db/migration/
@@ -241,7 +244,7 @@ src/main/resources/db/migration/
 
 보안 필터체인 3개(`SecurityConfig`, 순서대로):
 
-1. `apiChain` — 자체 JWT 리소스서버(stateless, iss+aud 검증). `securityMatcher`에 **나열된 경로만** 잡는다: `/api/me` · `/api/auth/agents`(ROLE_ADMIN) · `/api/auth/tokens`·`/api/auth/tokens/**`.
+1. `apiChain` — 자체 JWT 리소스서버(stateless, iss+aud 검증). `securityMatcher`에 **나열된 경로만** 잡는다: `/api/me` · `/api/auth/agents`·`/api/auth/agents/**`(ROLE_ADMIN) · `/api/auth/tokens`·`/api/auth/tokens/**`. 이 체인 안에서 `PatJwtGuardFilter`가 인가 판정 앞에 서서 `provider=PAT` JWT를 agents·tokens 경로에서 403으로 끊는다.
 2. `internalChain` — `/internal/**`. JWT가 아니라 `InternalSecretFilter`(상수시간 시크릿 비교, 미설정 시 fail-closed)가 인증을 전담한다.
 3. `webChain` — 그 외 전부. oauth2Login + `/api/auth/**`·`/.well-known/**`·`/error` permitAll.
 
