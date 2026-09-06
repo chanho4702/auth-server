@@ -3,6 +3,12 @@ server:
   # 게이트웨이(:8000) 뒤에서 X-Forwarded-* 헤더를 신뢰해 OIDC redirect_uri를 게이트웨이 호스트로 구성.
   forward-headers-strategy: framework
 spring:
+  cloud:
+    discovery:
+      client:
+        # 서비스 health는 자기 상태(db)만 본다 — 유레카 상태는 게이트웨이 대시보드가 eureka 컴포넌트로 따로 프로브한다(설계 §3).
+        health-indicator:
+          enabled: false
   application:
     name: auth-server
   # 모든 자격증명/URL은 env로 오버라이드 가능. 기본값은 로컬 dev 전용 — 운영에서는 반드시 주입.
@@ -44,6 +50,9 @@ management:
     build:
       enabled: true
 
+  health:
+    eureka:
+      enabled: false         # 유레카는 대시보드가 따로 본다(설계 §3)
 eureka:
   client:
     service-url:
