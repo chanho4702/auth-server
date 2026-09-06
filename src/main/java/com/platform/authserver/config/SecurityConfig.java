@@ -115,13 +115,34 @@ public class SecurityConfig {
     }
 
     /**
+     * Actuator 헬스/버전 — 관리자 대시보드가 게이트웨이를 통해 도커 네트워크 안에서 긁는다.
+     * 전용 체인으로 분리한 이유는 {@code webChain}에 두면 {@code anyRequest().authenticated()} +
+     * {@code oauth2Login}에 걸려 프로브가 Keycloak 로그인으로 302 리다이렉트되기 때문이다.
+     * 세션도 만들지 않는다(프로브가 JSESSIONID를 쌓지 않게).
+     *
+     * <p>여기 나열한 두 경로만 익명 허용이다. 다른 {@code /actuator/**}는 애초에
+     * {@code management.endpoints.web.exposure.include}에 없어 노출되지 않고, 이 체인의
+     * securityMatcher에도 걸리지 않아 {@code webChain}의 인증 요구로 떨어진다.
+     */
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 2)
+    SecurityFilterChain actuatorChain(HttpSecurity http) throws Exception {
+        http
+                .securityMatcher("/actuator/health", "/actuator/info")
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable())
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
+        return http.build();
+    }
+
+    /**
      * {@code /invite/**}는 로그인 <b>전</b>에 열려야 한다 — 초대 링크를 타고 온 사람은 아직 계정이
      * 없거나 로그인하지 않은 상태다. 이 경로는 토큰을 세션에 담고 Keycloak 로그인으로 보내기만 한다.
      *
      * <p>인가 요청 resolver를 갈아 끼우는 것은 그 세션 값으로 {@code login_hint}를 붙이기 위해서다.
      */
     @Bean
-    @Order(Ordered.HIGHEST_PRECEDENCE + 2)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 3)
     SecurityFilterChain webChain(HttpSecurity http, LoginSuccessHandler successHandler,
                                  ClientRegistrationRepository clientRegistrations) throws Exception {
         http

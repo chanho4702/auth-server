@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -82,7 +83,8 @@ class PersonalAccessTokenControllerTest {
     private PersonalAccessToken persistToken(User owner, String label, Instant createdAt, Instant expiresAt) {
         String raw = PersonalAccessTokenService.TOKEN_PREFIX + UUID.randomUUID();
         return tokenRepository.save(new PersonalAccessToken(owner.getId(), label,
-                RefreshTokenService.sha256(raw), raw.substring(raw.length() - 4), createdAt, expiresAt));
+                RefreshTokenService.sha256(raw), raw.substring(raw.length() - 4),
+                List.of(PatScopes.WIKI_READ), createdAt, expiresAt));
     }
 
     // ---------- 발급 ----------
@@ -91,7 +93,7 @@ class PersonalAccessTokenControllerTest {
     void create_returns_raw_token_once_and_stores_only_hash() throws Exception {
         String response = mvc.perform(post("/api/auth/tokens").with(as(alice))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"label\":\"CI 배포\",\"expiresInDays\":30}"))
+                        .content("{\"label\":\"CI 배포\",\"expiresInDays\":30,\"scopes\":[\"wiki:read\"]}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.label").value("CI 배포"))
                 .andReturn().getResponse().getContentAsString();
@@ -115,7 +117,7 @@ class PersonalAccessTokenControllerTest {
     void create_defaults_to_90_days_and_never_repeats_the_raw_token() throws Exception {
         mvc.perform(post("/api/auth/tokens").with(as(alice))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"label\":\"스크립트\"}"))
+                        .content("{\"label\":\"스크립트\",\"scopes\":[\"wiki:read\"]}"))
                 .andExpect(status().isCreated());
 
         PersonalAccessToken stored = tokenRepository.findAll().get(0);
@@ -131,7 +133,9 @@ class PersonalAccessTokenControllerTest {
 
     @Test
     void create_rejects_missing_blank_and_overlong_label() throws Exception {
-        for (String body : List.of("{}", "{\"label\":\"   \"}", "{\"label\":\"" + "가".repeat(101) + "\"}")) {
+        for (String body : List.of("{}",
+                "{\"label\":\"   \",\"scopes\":[\"wiki:read\"]}",
+                "{\"label\":\"" + "가".repeat(101) + "\",\"scopes\":[\"wiki:read\"]}")) {
             mvc.perform(post("/api/auth/tokens").with(as(alice))
                             .contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isBadRequest())
@@ -145,7 +149,7 @@ class PersonalAccessTokenControllerTest {
         for (int days : List.of(0, -1, 366)) {
             mvc.perform(post("/api/auth/tokens").with(as(alice))
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"label\":\"x\",\"expiresInDays\":" + days + "}"))
+                            .content("{\"label\":\"x\",\"scopes\":[\"wiki:read\"],\"expiresInDays\":" + days + "}"))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.error").value("invalid_expiry"));
         }
@@ -155,11 +159,12 @@ class PersonalAccessTokenControllerTest {
     @Test
     void create_rejects_26th_active_token_with_409() throws Exception {
         for (int i = 0; i < PersonalAccessTokenService.MAX_ACTIVE_TOKENS; i++) {
-            tokenService.create(alice.getId(), "t" + i, 90);
+            tokenService.create(alice.getId(), "t" + i, 90, List.of(PatScopes.WIKI_READ));
         }
 
         mvc.perform(post("/api/auth/tokens").with(as(alice))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"label\":\"26번째\"}"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"26번째\",\"scopes\":[\"wiki:read\"]}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("token_limit"));
 
@@ -167,8 +172,65 @@ class PersonalAccessTokenControllerTest {
         PersonalAccessToken victim = tokenRepository.findByUserIdOrderByCreatedAtDesc(alice.getId()).get(0);
         tokenService.revoke(alice.getId(), victim.getId());
         mvc.perform(post("/api/auth/tokens").with(as(alice))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"label\":\"재발급\"}"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"재발급\",\"scopes\":[\"wiki:read\"]}"))
                 .andExpect(status().isCreated());
+    }
+
+    // ---------- 스코프 ----------
+
+    @Test
+    void create_requires_at_least_one_scope() throws Exception {
+        for (String body : List.of(
+                "{\"label\":\"스코프 없음\"}",
+                "{\"label\":\"스코프 없음\",\"scopes\":null}",
+                "{\"label\":\"스코프 없음\",\"scopes\":[]}",
+                "{\"label\":\"스코프 없음\",\"scopes\":[\"  \"]}")) {
+            mvc.perform(post("/api/auth/tokens").with(as(alice))
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("scopes_required"));
+        }
+        assertThat(tokenRepository.count()).isZero();
+    }
+
+    @Test
+    void create_rejects_unknown_scopes() throws Exception {
+        for (String body : List.of(
+                "{\"label\":\"오타\",\"scopes\":[\"wiki:delete\"]}",
+                "{\"label\":\"대소문자\",\"scopes\":[\"WIKI:READ\"]}",
+                "{\"label\":\"섞임\",\"scopes\":[\"wiki:read\",\"board:read\"]}")) {
+            mvc.perform(post("/api/auth/tokens").with(as(alice))
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("scopes_invalid"));
+        }
+        assertThat(tokenRepository.count()).isZero();
+    }
+
+    @Test
+    void create_normalizes_scopes_and_echoes_them_in_the_response() throws Exception {
+        String response = mvc.perform(post("/api/auth/tokens").with(as(alice))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"정규화\",\"scopes\":[\" wiki:write \",\"admin\",\"wiki:write\",\"alm:read\"]}"))
+                .andExpect(status().isCreated())
+                // 중복 제거 + 사전순 정렬
+                .andExpect(jsonPath("$.scopes", contains("admin", "alm:read", "wiki:write")))
+                .andReturn().getResponse().getContentAsString();
+
+        Map<?, ?> body = objectMapper.readValue(response, Map.class);
+        PersonalAccessToken stored = tokenRepository.findById(UUID.fromString((String) body.get("id"))).orElseThrow();
+        assertThat(stored.getScopes()).containsExactly("admin", "alm:read", "wiki:write");
+    }
+
+    @Test
+    void list_exposes_scopes() throws Exception {
+        tokenService.create(alice.getId(), "목록", 30, List.of(PatScopes.ORG_WRITE, PatScopes.WIKI_READ));
+
+        mvc.perform(get("/api/auth/tokens").with(as(alice)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].scopes", contains("org:write", "wiki:read")))
+                .andExpect(jsonPath("$[0].token").doesNotExist());
     }
 
     // ---------- 목록 ----------

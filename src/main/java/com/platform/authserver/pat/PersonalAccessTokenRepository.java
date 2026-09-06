@@ -25,6 +25,27 @@ public interface PersonalAccessTokenRepository extends JpaRepository<PersonalAcc
             """)
     long countActive(@Param("userId") Long userId, @Param("now") Instant now);
 
+    // ---- 관리자 대시보드 집계(/internal/pat/stats). COUNT만 — 본문 스캔·조인·정렬 없음. ----
+
+    @Query("""
+            SELECT COUNT(t) FROM PersonalAccessToken t
+            WHERE t.revokedAt IS NULL AND t.expiresAt > :now
+            """)
+    long countAllActive(@Param("now") Instant now);
+
+    @Query("""
+            SELECT COUNT(DISTINCT t.userId) FROM PersonalAccessToken t
+            WHERE t.revokedAt IS NULL AND t.expiresAt > :now
+            """)
+    long countUsersWithActiveTokens(@Param("now") Instant now);
+
+    /** 지금은 살아 있지만 {@code threshold} 전에 만료되는 토큰 — 대시보드의 "곧 만료" 수치. */
+    @Query("""
+            SELECT COUNT(t) FROM PersonalAccessToken t
+            WHERE t.revokedAt IS NULL AND t.expiresAt > :now AND t.expiresAt <= :threshold
+            """)
+    long countActiveExpiringBefore(@Param("now") Instant now, @Param("threshold") Instant threshold);
+
     /** 만료·폐기된 지 cutoff보다 오래된 행을 물리 삭제. 활성 토큰은 절대 지우지 않는다. */
     @Modifying(clearAutomatically = true)
     @Query("""

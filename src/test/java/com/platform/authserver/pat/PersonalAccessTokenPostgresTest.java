@@ -10,12 +10,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
+import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import javax.sql.DataSource;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -44,6 +46,7 @@ class PersonalAccessTokenPostgresTest {
     @Autowired PersonalAccessTokenService tokenService;
     @Autowired PatCleanupJob cleanupJob;
     @Autowired JdbcTemplate jdbc;
+    @Autowired DataSource dataSource;
 
     @AfterEach
     void clean() {
@@ -60,7 +63,8 @@ class PersonalAccessTokenPostgresTest {
     private PersonalAccessToken persist(User owner, Instant expiresAt, Instant revokedAt) {
         String raw = PersonalAccessTokenService.TOKEN_PREFIX + UUID.randomUUID();
         PersonalAccessToken token = new PersonalAccessToken(owner.getId(), "라벨",
-                RefreshTokenService.sha256(raw), raw.substring(raw.length() - 4), Instant.now(), expiresAt);
+                RefreshTokenService.sha256(raw), raw.substring(raw.length() - 4),
+                List.of(PatScopes.WIKI_READ), Instant.now(), expiresAt);
         if (revokedAt != null) {
             token.revoke(revokedAt);
         }
@@ -83,7 +87,8 @@ class PersonalAccessTokenPostgresTest {
     @Test
     void entity_round_trips_against_the_migrated_schema() {
         User user = newUser();
-        PersonalAccessTokenService.Created created = tokenService.create(user.getId(), "CI 배포", 30);
+        PersonalAccessTokenService.Created created = tokenService.create(
+                user.getId(), "CI 배포", 30, List.of(PatScopes.WIKI_READ, PatScopes.ALM_READ));
 
         PersonalAccessToken reloaded = tokenRepository
                 .findByTokenHash(RefreshTokenService.sha256(created.rawToken())).orElseThrow();
@@ -93,6 +98,76 @@ class PersonalAccessTokenPostgresTest {
         assertThat(reloaded.getExpiresAt()).isAfter(Instant.now().plus(29, ChronoUnit.DAYS));
         assertThat(reloaded.getLastUsedAt()).isNull();
         assertThat(reloaded.getRevokedAt()).isNull();
+    }
+
+    @Test
+    void v5_adds_a_not_null_scopes_column_that_the_entity_validates_against() {
+        // ddl-auto=validate로 컨텍스트가 떴다는 것 자체가 매핑 일치의 증거고, 여기서는 제약을 못 박는다.
+        String nullable = jdbc.queryForObject("""
+                SELECT is_nullable FROM information_schema.columns
+                 WHERE table_name = 'personal_access_tokens' AND column_name = 'scopes'
+                """, String.class);
+        assertThat(nullable).isEqualTo("NO");
+
+        Integer length = jdbc.queryForObject("""
+                SELECT character_maximum_length FROM information_schema.columns
+                 WHERE table_name = 'personal_access_tokens' AND column_name = 'scopes'
+                """, Integer.class);
+        assertThat(length).isEqualTo(255);
+
+        User user = newUser();
+        PersonalAccessTokenService.Created created = tokenService.create(
+                user.getId(), "스코프", 30, List.of(PatScopes.WIKI_WRITE, PatScopes.ADMIN));
+
+        // 저장은 쉼표 구분 한 컬럼, 읽기는 정렬된 목록.
+        String stored = jdbc.queryForObject("SELECT scopes FROM personal_access_tokens WHERE id = ?",
+                String.class, created.token().getId());
+        assertThat(stored).isEqualTo("admin,wiki:write");
+        assertThat(tokenRepository.findById(created.token().getId()).orElseThrow().getScopes())
+                .containsExactly("admin", "wiki:write");
+    }
+
+    /**
+     * 스코프 개념 이전에 발급된 행이 V5에서 전체 스코프로 채워지는지 — 별도 스키마에 V4까지만
+     * 올린 뒤 행을 심고 V5를 적용해 실제 백필을 돌린다. 앱이 쓰는 스키마(public)는 이미
+     * 최신이라 이 경로를 재현할 수 없다.
+     */
+    @Test
+    void v5_backfills_pre_existing_rows_with_every_scope() {
+        String schema = "pat_backfill";
+        Flyway toV4 = Flyway.configure()
+                .dataSource(dataSource)
+                .schemas(schema)
+                .createSchemas(true)
+                .locations("classpath:db/migration")
+                .target("4")
+                .load();
+        toV4.migrate();
+
+        jdbc.update("INSERT INTO " + schema + ".users (keycloak_sub, roles, created_at) VALUES (?, ?, ?)",
+                "kc-legacy-" + System.nanoTime(), "USER", java.sql.Timestamp.from(Instant.now()));
+        Long userId = jdbc.queryForObject("SELECT MAX(id) FROM " + schema + ".users", Long.class);
+        UUID tokenId = UUID.randomUUID();
+        jdbc.update("INSERT INTO " + schema + ".personal_access_tokens"
+                        + " (id, user_id, label, token_hash, token_hint, created_at, expires_at)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                tokenId, userId, "예전 토큰", "hash-" + tokenId, "ab12",
+                java.sql.Timestamp.from(Instant.now()),
+                java.sql.Timestamp.from(Instant.now().plus(30, ChronoUnit.DAYS)));
+
+        Flyway.configure()
+                .dataSource(dataSource)
+                .schemas(schema)
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+
+        String scopes = jdbc.queryForObject(
+                "SELECT scopes FROM " + schema + ".personal_access_tokens WHERE id = ?", String.class, tokenId);
+        // 기존 토큰은 모든 경로에 쓰이고 있었으므로 전체 스코프 — 좁히면 돌던 스크립트가 깨진다.
+        assertThat(PatScopes.parse(scopes)).isEqualTo(PatScopes.ALL);
+
+        jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
     }
 
     @Test

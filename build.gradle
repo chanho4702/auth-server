@@ -23,6 +23,8 @@ dependencies {
     // 유레카 자기등록 — 게이트웨이 lb://auth-server가 이 등록을 바라본다
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    // 헬스/버전 노출(내부망 전용) — 게이트웨이 관리자 대시보드가 /actuator/health, /actuator/info를 모은다.
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
@@ -47,5 +49,9 @@ dependencies {
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
     testImplementation 'org.testcontainers:testcontainers-postgresql'
 }
+// build-info.properties 생성 — /actuator/info의 build.version이 이걸 읽는다
+// (management.info.build.enabled). 없으면 info가 빈 응답이라 대시보드에 버전이 안 뜬다.
+springBoot { buildInfo() }
+
 tasks.named('test') { useJUnitPlatform() }
 tasks.named('bootJar') { archiveFileName = 'app.jar' }

@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,7 +41,11 @@ public class PersonalAccessTokenService {
     static final int MAX_LABEL_LENGTH = 100;
     /** last_used_at 갱신 최소 간격. 게이트웨이 캐시 TTL(60s)과 맞춘다. */
     static final long LAST_USED_THROTTLE_SECONDS = 60;
+    /** {@link #stats()}의 "곧 만료" 기준. 관리자 대시보드 카드가 이 창을 쓴다. */
+    static final int EXPIRING_SOON_DAYS = 7;
     private static final String PAT_PROVIDER = "PAT";
+    /** 교환 JWT의 스코프 클레임 이름. 게이트웨이 PatScopeWebFilter와 맞춘 계약이다. */
+    public static final String SCOPE_CLAIM = "scope";
 
     private final PersonalAccessTokenRepository tokenRepository;
     private final UserRepository userRepository;
@@ -64,6 +69,9 @@ public class PersonalAccessTokenService {
     /** 교환 결과 — 플랫폼 JWT와 그 TTL. */
     public record Exchanged(String accessToken, long expiresInSeconds) {}
 
+    /** 활성 토큰 집계. 활성 = 미폐기 AND 미만료. */
+    public record Stats(long activeTokens, long usersWithTokens, long expiringWithin7Days) {}
+
     @Transactional(readOnly = true)
     public List<PersonalAccessToken> list(long userId) {
         return tokenRepository.findByUserIdOrderByCreatedAtDesc(userId);
@@ -71,12 +79,14 @@ public class PersonalAccessTokenService {
 
     /**
      * 새 토큰 발급. 라벨/만료일 검증은 컨트롤러가 이미 마쳤다고 보고, 여기서는 도메인 규칙인
-     * 활성 개수 한도만 본다.
+     * 활성 개수 한도만 본다. 스코프는 엔티티 생성자가 정규화·검증한다
+     * ({@link PatScopes#normalize}) — 빈 목록·모르는 값은 여기서도 통과하지 못한다.
      *
      * @throws TokenLimitExceededException 활성 토큰이 {@value #MAX_ACTIVE_TOKENS}개 이상일 때
+     * @throws IllegalArgumentException    스코프가 비었거나 허용 집합 밖일 때
      */
     @Transactional
-    public Created create(long userId, String label, int expiresInDays) {
+    public Created create(long userId, String label, int expiresInDays, List<String> scopes) {
         Instant now = Instant.now();
         if (tokenRepository.countActive(userId, now) >= MAX_ACTIVE_TOKENS) {
             throw new TokenLimitExceededException(
@@ -86,12 +96,12 @@ public class PersonalAccessTokenService {
         String raw = generateRawToken();
         String hint = raw.substring(raw.length() - HINT_LENGTH);
         PersonalAccessToken token = new PersonalAccessToken(
-                userId, label, RefreshTokenService.sha256(raw), hint,
+                userId, label, RefreshTokenService.sha256(raw), hint, scopes,
                 now, now.plus(Duration.ofDays(expiresInDays)));
         PersonalAccessToken saved = tokenRepository.save(token);
 
-        log.info("PAT 발급: userId={}, tokenId={}, hint={}, expiresAt={}",
-                userId, saved.getId(), hint, saved.getExpiresAt());
+        log.info("PAT 발급: userId={}, tokenId={}, hint={}, scopes={}, expiresAt={}",
+                userId, saved.getId(), hint, saved.getScopes(), saved.getExpiresAt());
         return new Created(saved, raw);
     }
 
@@ -148,9 +158,25 @@ public class PersonalAccessTokenService {
         token.touchLastUsed(now, LAST_USED_THROTTLE_SECONDS);
 
         User u = user.get();
+        // scope 클레임은 PAT 교환 JWT에만 실린다 — 세션 JWT(로그인/refresh)는 스코프 개념이 없다.
+        // 게이트웨이의 PatScopeWebFilter가 이 클레임으로 경로/메서드를 판정한다.
         String jwt = jwtService.issueAccessToken(
-                u.getId(), u.getEmail(), u.getName(), u.getRoles(), PAT_PROVIDER, patJwtTtlSeconds);
+                u.getId(), u.getEmail(), u.getName(), u.getRoles(), PAT_PROVIDER, patJwtTtlSeconds,
+                Map.of(SCOPE_CLAIM, token.getScopes()));
         return Optional.of(new Exchanged(jwt, patJwtTtlSeconds));
+    }
+
+    /**
+     * 관리자 대시보드용 집계(게이트웨이 {@code /api/platform/stats/tokens}가 소비).
+     * COUNT 세 번만 돈다 — 캐시는 호출부(게이트웨이, 60초)가 한다.
+     */
+    @Transactional(readOnly = true)
+    public Stats stats() {
+        Instant now = Instant.now();
+        return new Stats(
+                tokenRepository.countAllActive(now),
+                tokenRepository.countUsersWithActiveTokens(now),
+                tokenRepository.countActiveExpiringBefore(now, now.plus(Duration.ofDays(EXPIRING_SOON_DAYS))));
     }
 
     /** {@code chanho_pat_} + base64url(SecureRandom 32바이트) = 11 + 43자. */

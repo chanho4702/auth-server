@@ -30,6 +30,20 @@ spring:
           keycloak:
             issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/sso-demo}
 
+# 내부망 전용 관측 표면. 게이트웨이 라우트는 /api/**뿐이고 nginx도 actuator를 넘기지 않으므로
+# 외부에서 닿지 않는다. 노출은 health/info 둘뿐 — 나머지 엔드포인트는 include에 없어서 404다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  info:
+    build:
+      enabled: true
+
 eureka:
   client:
     service-url:

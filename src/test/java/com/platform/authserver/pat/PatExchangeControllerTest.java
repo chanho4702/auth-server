@@ -82,7 +82,8 @@ class PatExchangeControllerTest {
     private String persistToken(User owner, Instant expiresAt, boolean revoked) {
         String raw = PersonalAccessTokenService.TOKEN_PREFIX + UUID.randomUUID();
         PersonalAccessToken token = new PersonalAccessToken(owner.getId(), "라벨",
-                RefreshTokenService.sha256(raw), raw.substring(raw.length() - 4), Instant.now(), expiresAt);
+                RefreshTokenService.sha256(raw), raw.substring(raw.length() - 4),
+                List.of(PatScopes.WIKI_READ), Instant.now(), expiresAt);
         if (revoked) {
             token.revoke(Instant.now());
         }
@@ -94,7 +95,7 @@ class PatExchangeControllerTest {
 
     @Test
     void exchanges_active_token_for_a_short_lived_platform_jwt() throws Exception {
-        String raw = tokenService.create(alice.getId(), "CI", 90).rawToken();
+        String raw = tokenService.create(alice.getId(), "CI", 90, List.of(PatScopes.WIKI_READ)).rawToken();
 
         String response = exchange(raw, SECRET)
                 .andExpect(status().isOk())
@@ -109,10 +110,28 @@ class PatExchangeControllerTest {
         assertThat(claims.getStringClaim("provider")).isEqualTo("PAT");
         assertThat(claims.getStringClaim("email")).isEqualTo("alice@demo.com");
         assertThat(claims.getStringListClaim("roles")).containsExactly("USER", "ADMIN");
+        // 게이트웨이 PatScopeWebFilter가 읽는 계약 — 이름은 scope, 값은 문자열 배열.
+        assertThat(claims.getStringListClaim("scope")).containsExactly("wiki:read");
         assertThat(claims.getAudience()).containsExactly("platform-api");
         // 세션 AT(900s)이 아니라 PAT 전용 TTL로 서명됐는지 — exp-iat로 실측.
         long ttl = (claims.getExpirationTime().getTime() - claims.getIssueTime().getTime()) / 1000;
         assertThat(ttl).isEqualTo(PAT_JWT_TTL);
+    }
+
+    @Test
+    void scope_claim_carries_exactly_the_tokens_scopes() throws Exception {
+        String raw = tokenService.create(alice.getId(), "여러 스코프", 90,
+                List.of(PatScopes.ADMIN, PatScopes.ALM_WRITE, PatScopes.WIKI_READ)).rawToken();
+
+        String response = exchange(raw, SECRET).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        Map<?, ?> body = objectMapper.readValue(response, Map.class);
+        var claims = SignedJWT.parse((String) body.get("accessToken")).getJWTClaimsSet();
+
+        // 사용자 롤(USER/ADMIN)과 스코프는 별개다 — 토큰에 준 것만 실린다.
+        assertThat(claims.getStringListClaim("scope"))
+                .containsExactly("admin", "alm:write", "wiki:read");
+        assertThat(claims.getStringListClaim("roles")).containsExactly("USER", "ADMIN");
     }
 
     // ---------- 실패는 전부 같은 401 ----------
@@ -152,7 +171,7 @@ class PatExchangeControllerTest {
 
     @Test
     void wrong_or_missing_internal_secret_is_403() throws Exception {
-        String raw = tokenService.create(alice.getId(), "CI", 90).rawToken();
+        String raw = tokenService.create(alice.getId(), "CI", 90, List.of(PatScopes.WIKI_READ)).rawToken();
 
         exchange(raw, "wrong-secret").andExpect(status().isForbidden());
         exchange(raw, null).andExpect(status().isForbidden());
@@ -166,7 +185,7 @@ class PatExchangeControllerTest {
 
     @Test
     void last_used_at_updates_at_most_once_per_minute() throws Exception {
-        String raw = tokenService.create(alice.getId(), "CI", 90).rawToken();
+        String raw = tokenService.create(alice.getId(), "CI", 90, List.of(PatScopes.WIKI_READ)).rawToken();
         String hash = RefreshTokenService.sha256(raw);
 
         exchange(raw, SECRET).andExpect(status().isOk());

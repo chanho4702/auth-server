@@ -39,19 +39,19 @@ public class PersonalAccessTokenController {
         this.tokenService = tokenService;
     }
 
-    public record CreateRequest(String label, Integer expiresInDays) {}
+    public record CreateRequest(String label, Integer expiresInDays, List<String> scopes) {}
 
     /** 목록 응답. 원문도 해시도 나가지 않는다 — 식별은 {@code hint}로만. */
-    public record TokenView(String id, String label, String hint,
+    public record TokenView(String id, String label, String hint, List<String> scopes,
                             Instant createdAt, Instant expiresAt, Instant lastUsedAt, Instant revokedAt) {
         static TokenView of(PersonalAccessToken t) {
-            return new TokenView(t.getId().toString(), t.getLabel(), t.getTokenHint(),
+            return new TokenView(t.getId().toString(), t.getLabel(), t.getTokenHint(), t.getScopes(),
                     t.getCreatedAt(), t.getExpiresAt(), t.getLastUsedAt(), t.getRevokedAt());
         }
     }
 
     /** 발급 응답 — {@code token}(원문)이 실리는 유일한 응답이다. */
-    public record CreatedView(String id, String label, String hint,
+    public record CreatedView(String id, String label, String hint, List<String> scopes,
                               Instant createdAt, Instant expiresAt, String token) {}
 
     @GetMapping
@@ -73,11 +73,20 @@ public class PersonalAccessTokenController {
                 || expiresInDays > PersonalAccessTokenService.MAX_EXPIRY_DAYS) {
             return error(HttpStatus.BAD_REQUEST, "invalid_expiry");
         }
+        // 스코프는 필수다 — 기본값(전체 스코프 등)을 주지 않는다. 안 보내면 발급이 실패해야
+        // 호출부가 무엇을 허용하는지 명시하게 된다. 기존 토큰만 V5 백필로 전체 스코프를 갖는다.
+        List<String> scopes = PatScopes.clean(request.scopes());
+        if (scopes.isEmpty()) {
+            return error(HttpStatus.BAD_REQUEST, "scopes_required");
+        }
+        if (!PatScopes.allAllowed(scopes)) {
+            return error(HttpStatus.BAD_REQUEST, "scopes_invalid");
+        }
 
-        PersonalAccessTokenService.Created created = tokenService.create(userId(jwt), label, expiresInDays);
+        PersonalAccessTokenService.Created created = tokenService.create(userId(jwt), label, expiresInDays, scopes);
         PersonalAccessToken t = created.token();
         return ResponseEntity.status(HttpStatus.CREATED).body(new CreatedView(
-                t.getId().toString(), t.getLabel(), t.getTokenHint(),
+                t.getId().toString(), t.getLabel(), t.getTokenHint(), t.getScopes(),
                 t.getCreatedAt(), t.getExpiresAt(), created.rawToken()));
     }
 

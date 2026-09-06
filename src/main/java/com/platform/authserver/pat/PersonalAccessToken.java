@@ -1,6 +1,7 @@
 package com.platform.authserver.pat;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -9,6 +10,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -40,6 +42,15 @@ public class PersonalAccessToken {
     @Column(name = "token_hint", nullable = false, length = 8)
     private String tokenHint;
 
+    /**
+     * 이 토큰이 허용된 스코프. 저장은 쉼표 구분 한 컬럼({@link PatScopesConverter}),
+     * 값은 항상 정규화(중복 제거·정렬)된 상태다. 빈 목록은 만들 수 없다
+     * ({@link PatScopes#normalize}가 생성 경로에서 막는다).
+     */
+    @Convert(converter = PatScopesConverter.class)
+    @Column(nullable = false, length = 255)
+    private List<String> scopes;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -53,12 +64,14 @@ public class PersonalAccessToken {
     private Instant revokedAt;
 
     public PersonalAccessToken(Long userId, String label, String tokenHash, String tokenHint,
-                               Instant createdAt, Instant expiresAt) {
+                               List<String> scopes, Instant createdAt, Instant expiresAt) {
         this.id = UUID.randomUUID();
         this.userId = userId;
         this.label = label;
         this.tokenHash = tokenHash;
         this.tokenHint = tokenHint;
+        // 생성자에서 정규화한다 — 호출부마다 normalize를 기억해야 하면 언젠가 빠진다.
+        this.scopes = PatScopes.normalize(scopes);
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
     }
