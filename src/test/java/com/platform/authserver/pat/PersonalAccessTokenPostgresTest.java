@@ -128,46 +128,72 @@ class PersonalAccessTokenPostgresTest {
     }
 
     /**
-     * 스코프 개념 이전에 발급된 행이 V5에서 전체 스코프로 채워지는지 — 별도 스키마에 V4까지만
-     * 올린 뒤 행을 심고 V5를 적용해 실제 백필을 돌린다. 앱이 쓰는 스키마(public)는 이미
-     * 최신이라 이 경로를 재현할 수 없다.
+     * 스코프 개념 이전에 발급된 행이 V5→V6을 거쳐 전체 스코프가 되는지, 그리고 <b>스코프를 좁혀
+     * 발급한 행은 V6이 건드리지 않는지</b> — 별도 스키마에 V4까지만 올린 뒤 두 행을 심고 나머지
+     * 마이그레이션을 적용해 실제 백필을 돌린다. 앱이 쓰는 스키마(public)는 이미 최신이라 이
+     * 경로를 재현할 수 없다.
+     *
+     * <p>좁은 행을 함께 검증하는 이유: V6이 조건 없이 UPDATE하면 사용자가 {@code wiki:read} 하나로
+     * 발급한 토큰에 게시판 쓰기가 얹힌다. 마이그레이션은 되돌릴 수 없으므로 여기서 못 박는다.
      */
     @Test
-    void v5_backfills_pre_existing_rows_with_every_scope() {
+    void v5_and_v6_backfill_legacy_rows_without_widening_narrow_ones() {
         String schema = "pat_backfill";
-        Flyway toV4 = Flyway.configure()
+        UUID legacyId = UUID.randomUUID();
+        UUID narrowId = UUID.randomUUID();
+        try {
+            flyway(schema).target("4").load().migrate();
+
+            jdbc.update("INSERT INTO " + schema + ".users (keycloak_sub, roles, created_at) VALUES (?, ?, ?)",
+                    "kc-legacy-" + System.nanoTime(), "USER", java.sql.Timestamp.from(Instant.now()));
+            Long userId = jdbc.queryForObject("SELECT MAX(id) FROM " + schema + ".users", Long.class);
+            seedToken(schema, userId, legacyId, "예전 토큰", null);
+
+            // V5까지만 올려 legacy 행이 7개로 채워지게 한 뒤 좁은 행을 심는다 — "스코프를 골라
+            // 발급한 토큰"을 V6 직전 상태로 재현하는 유일한 방법이다(V5 이후로는 컬럼이 NOT NULL).
+            flyway(schema).target("5").load().migrate();
+            assertThat(storedScopes(schema, legacyId)).containsExactly(
+                    "admin", "alm:read", "alm:write", "org:read", "org:write", "wiki:read", "wiki:write");
+            seedToken(schema, userId, narrowId, "좁은 토큰", PatScopes.WIKI_READ);
+
+            flyway(schema).load().migrate();
+
+            // 기존 토큰은 모든 경로에 쓰이고 있었으므로 전체 스코프 — 좁히면 돌던 스크립트가 깨진다.
+            assertThat(storedScopes(schema, legacyId)).isEqualTo(PatScopes.ALL);
+            // 사용자가 좁힌 토큰은 그대로. 게시판 쓰기가 얹히면 권한 확대다.
+            assertThat(storedScopes(schema, narrowId)).containsExactly(PatScopes.WIKI_READ);
+        } finally {
+            // 남기면 information_schema를 스키마 없이 훑는 다른 테스트가 같은 테이블을 두 번 본다.
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
+    }
+
+    private org.flywaydb.core.api.configuration.FluentConfiguration flyway(String schema) {
+        return Flyway.configure()
                 .dataSource(dataSource)
                 .schemas(schema)
                 .createSchemas(true)
-                .locations("classpath:db/migration")
-                .target("4")
-                .load();
-        toV4.migrate();
+                .locations("classpath:db/migration");
+    }
 
-        jdbc.update("INSERT INTO " + schema + ".users (keycloak_sub, roles, created_at) VALUES (?, ?, ?)",
-                "kc-legacy-" + System.nanoTime(), "USER", java.sql.Timestamp.from(Instant.now()));
-        Long userId = jdbc.queryForObject("SELECT MAX(id) FROM " + schema + ".users", Long.class);
-        UUID tokenId = UUID.randomUUID();
-        jdbc.update("INSERT INTO " + schema + ".personal_access_tokens"
-                        + " (id, user_id, label, token_hash, token_hint, created_at, expires_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                tokenId, userId, "예전 토큰", "hash-" + tokenId, "ab12",
-                java.sql.Timestamp.from(Instant.now()),
-                java.sql.Timestamp.from(Instant.now().plus(30, ChronoUnit.DAYS)));
+    /** {@code scopes}가 null이면 컬럼을 빼고 넣는다 — V5 이전 스키마(컬럼 자체가 없음)를 재현한다. */
+    private void seedToken(String schema, Long userId, UUID tokenId, String label, String scopes) {
+        String columns = "(id, user_id, label, token_hash, token_hint, created_at, expires_at"
+                + (scopes == null ? ")" : ", scopes)");
+        String values = " VALUES (?, ?, ?, ?, ?, ?, ?" + (scopes == null ? ")" : ", ?)");
+        Object[] args = scopes == null
+                ? new Object[] {tokenId, userId, label, "hash-" + tokenId, "ab12",
+                        java.sql.Timestamp.from(Instant.now()),
+                        java.sql.Timestamp.from(Instant.now().plus(30, ChronoUnit.DAYS))}
+                : new Object[] {tokenId, userId, label, "hash-" + tokenId, "ab12",
+                        java.sql.Timestamp.from(Instant.now()),
+                        java.sql.Timestamp.from(Instant.now().plus(30, ChronoUnit.DAYS)), scopes};
+        jdbc.update("INSERT INTO " + schema + ".personal_access_tokens " + columns + values, args);
+    }
 
-        Flyway.configure()
-                .dataSource(dataSource)
-                .schemas(schema)
-                .locations("classpath:db/migration")
-                .load()
-                .migrate();
-
-        String scopes = jdbc.queryForObject(
-                "SELECT scopes FROM " + schema + ".personal_access_tokens WHERE id = ?", String.class, tokenId);
-        // 기존 토큰은 모든 경로에 쓰이고 있었으므로 전체 스코프 — 좁히면 돌던 스크립트가 깨진다.
-        assertThat(PatScopes.parse(scopes)).isEqualTo(PatScopes.ALL);
-
-        jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
+    private List<String> storedScopes(String schema, UUID tokenId) {
+        return PatScopes.parse(jdbc.queryForObject(
+                "SELECT scopes FROM " + schema + ".personal_access_tokens WHERE id = ?", String.class, tokenId));
     }
 
     @Test

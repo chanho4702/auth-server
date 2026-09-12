@@ -199,7 +199,8 @@ class PersonalAccessTokenControllerTest {
         for (String body : List.of(
                 "{\"label\":\"오타\",\"scopes\":[\"wiki:delete\"]}",
                 "{\"label\":\"대소문자\",\"scopes\":[\"WIKI:READ\"]}",
-                "{\"label\":\"섞임\",\"scopes\":[\"wiki:read\",\"board:read\"]}")) {
+                "{\"label\":\"없는_쓰기\",\"scopes\":[\"search:write\"]}",
+                "{\"label\":\"섞임\",\"scopes\":[\"wiki:read\",\"board:delete\"]}")) {
             mvc.perform(post("/api/auth/tokens").with(as(alice))
                             .contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isBadRequest())

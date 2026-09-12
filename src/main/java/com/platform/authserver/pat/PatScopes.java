@@ -24,15 +24,27 @@ public final class PatScopes {
     public static final String ALM_WRITE = "alm:write";
     public static final String ORG_READ = "org:read";
     public static final String ORG_WRITE = "org:write";
+    public static final String BOARD_READ = "board:read";
+    public static final String BOARD_WRITE = "board:write";
+    /**
+     * 검색은 읽기 전용이다 — {@code search:write}는 만들지 않는다. 질의 표면이 GraphQL 단일
+     * URL이고(게이트웨이 {@code /api/search/graphql}), 색인을 바꾸는 유일한 경로인
+     * {@code /api/search/admin/reindex}는 {@link #ADMIN}이 따로 지킨다.
+     */
+    public static final String SEARCH_READ = "search:read";
     /** 각 서비스의 관리 경로(제품별 admin 경로, migration, agent)에 추가로 요구되는 스코프. */
     public static final String ADMIN = "admin";
 
     /**
-     * 허용 스코프 전체(정규화 순서 = 사전순). V5 마이그레이션의 기존 행 백필 문자열이
-     * 이 목록과 같아야 한다.
+     * 허용 스코프 전체(정규화 순서 = 사전순). 마이그레이션의 기존 행 백필 문자열이 이 목록과
+     * 누적으로 맞아야 한다 — V5가 7개를 채웠고 V6이 board/search 3개를 덧붙인다(PatScopesTest가 대조).
      */
     public static final List<String> ALL = List.of(
-            ADMIN, ALM_READ, ALM_WRITE, ORG_READ, ORG_WRITE, WIKI_READ, WIKI_WRITE);
+            ADMIN, ALM_READ, ALM_WRITE, BOARD_READ, BOARD_WRITE,
+            ORG_READ, ORG_WRITE, SEARCH_READ, WIKI_READ, WIKI_WRITE);
+
+    /** V6이 기존 행에 덧붙이는 스코프(사전순). V5 백필과 합치면 {@link #ALL}이 된다. */
+    public static final List<String> V6_ADDED = List.of(BOARD_READ, BOARD_WRITE, SEARCH_READ);
 
     private static final Set<String> ALLOWED = Set.copyOf(ALL);
     private static final String DELIMITER = ",";
