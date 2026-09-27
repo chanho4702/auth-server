@@ -97,6 +97,8 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | DELETE | `/api/auth/tokens/{id}` | Bearer(자체 JWT) | PAT 폐기 → 204. 이미 폐기면 그대로 204(멱등), 남의 토큰이면 404 |
 | POST | `/internal/pat/exchange` | `X-Internal-Secret` | 게이트웨이 전용. `{"token":"chanho_pat_…"}` → 200 `{accessToken, expiresInSeconds}` 또는 401 `{"error":"invalid_token"}` — `PatExchangeController` |
 | POST | `/internal/service-tokens` | `X-Internal-Secret` | 에이전트 페르소나 사용자용 AT 발급 — `AgentTokenController` |
+| POST | `/api/auth/agents` | Bearer(ROLE_ADMIN) | 에이전트 페르소나 사용자 생성(멱등). 요청 `{slug([a-z0-9-]{2,40}), name, email?}` → 200 `{userId, slug, created}`, slug 형식 위반 400 — `AgentAdminController` |
+| POST | `/internal/agents` | `X-Internal-Secret` | 위 `/api/auth/agents`와 **같은 핸들러**(요청·응답·동작 동일). agent-service가 권한 판정 후 페르소나 계정을 등록하는 서비스 간 경로(AGP-64) — `AgentAdminController` |
 
 > **전역 관리자 판정은 `/api/me`가 아니다.** 여기 `roles`는 Keycloak realm 역할이고, 플랫폼 관리자 여부는
 > `GET /api/org/me`의 `globalRoles`(org-service)로 본다 — auth-server는 org를 모른다.
