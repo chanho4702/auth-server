@@ -7,6 +7,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -41,6 +42,11 @@ public class PersonalAccessTokenController {
 
     public record CreateRequest(String label, Integer expiresInDays, List<String> scopes) {}
 
+    /** 이름 변경 요청(F-21). 화면 용어인 {@code name}과 발급 필드명 {@code label}을 둘 다 받는다({@code name} 우선). */
+    public record RenameRequest(String name, String label) {
+        String value() { return name != null ? name : label; }
+    }
+
     /** 목록 응답. 원문도 해시도 나가지 않는다 — 식별은 {@code hint}로만. */
     public record TokenView(String id, String label, String hint, List<String> scopes,
                             Instant createdAt, Instant expiresAt, Instant lastUsedAt, Instant revokedAt) {
@@ -62,8 +68,8 @@ public class PersonalAccessTokenController {
 
     @PostMapping
     public ResponseEntity<?> create(@AuthenticationPrincipal Jwt jwt, @RequestBody(required = false) CreateRequest request) {
-        String label = request == null || request.label() == null ? null : request.label().trim();
-        if (label == null || label.isEmpty() || label.length() > PersonalAccessTokenService.MAX_LABEL_LENGTH) {
+        String label = validLabel(request == null ? null : request.label());
+        if (label == null) {
             return error(HttpStatus.BAD_REQUEST, "label_required");
         }
         int expiresInDays = request.expiresInDays() == null
@@ -90,6 +96,31 @@ public class PersonalAccessTokenController {
                 t.getCreatedAt(), t.getExpiresAt(), created.rawToken()));
     }
 
+    /** 이름 변경(F-21) → 200 목록 항목 모양({@link TokenView}). 이름 규칙은 발급과 같다. 남의 토큰·없는 id는 404. */
+    @PatchMapping("/{id}")
+    public ResponseEntity<?> rename(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
+                                    @RequestBody(required = false) RenameRequest request) {
+        UUID tokenId = parseId(id);
+        if (tokenId == null) {
+            return error(HttpStatus.NOT_FOUND, "not_found");
+        }
+        String label = validLabel(request == null ? null : request.value());
+        if (label == null) {
+            return error(HttpStatus.BAD_REQUEST, "label_required");
+        }
+        return ResponseEntity.ok(TokenView.of(tokenService.rename(userId(jwt), tokenId, label)));
+    }
+
+    /**
+     * 내 토큰 전부 폐기(F-21) → 204. 멱등. 게이트웨이 교환 캐시·발급된 교환 JWT는 TTL 동안 남는다
+     * ({@link PersonalAccessTokenService#revokeAll}).
+     */
+    @DeleteMapping
+    public ResponseEntity<?> revokeAll(@AuthenticationPrincipal Jwt jwt) {
+        tokenService.revokeAll(userId(jwt));
+        return ResponseEntity.noContent().build();
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<?> revoke(@AuthenticationPrincipal Jwt jwt, @PathVariable String id) {
         UUID tokenId;
@@ -111,6 +142,24 @@ public class PersonalAccessTokenController {
     @ExceptionHandler(TokenLimitExceededException.class)
     ResponseEntity<?> handleLimit(TokenLimitExceededException e) {
         return error(HttpStatus.CONFLICT, "token_limit");
+    }
+
+    /** 발급·이름 변경 공통 규칙 — trim 후 1~{@value PersonalAccessTokenService#MAX_LABEL_LENGTH}자. 위반이면 null. */
+    private static String validLabel(String raw) {
+        String label = raw == null ? null : raw.trim();
+        if (label == null || label.isEmpty() || label.length() > PersonalAccessTokenService.MAX_LABEL_LENGTH) {
+            return null;
+        }
+        return label;
+    }
+
+    /** 형식이 틀린 id도 "그런 토큰 없음"과 같은 응답 — 존재 여부를 추측할 단서를 주지 않는다. */
+    private static UUID parseId(String id) {
+        try {
+            return UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private long userId(Jwt jwt) {

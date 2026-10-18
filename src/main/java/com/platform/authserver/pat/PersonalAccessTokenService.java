@@ -122,6 +122,42 @@ public class PersonalAccessTokenService {
     }
 
     /**
+     * 이름 변경(F-21). 남의 토큰이면 존재를 노출하지 않고 404. 폐기·만료된 토큰도 이름은 바꿀 수 있다(목록 정리용).
+     *
+     * @throws TokenNotFoundException 없는 토큰이거나 다른 사용자의 토큰일 때
+     */
+    @Transactional
+    public PersonalAccessToken rename(long userId, UUID tokenId, String label) {
+        PersonalAccessToken token = tokenRepository.findByIdAndUserId(tokenId, userId)
+                .orElseThrow(() -> new TokenNotFoundException("토큰을 찾을 수 없습니다"));
+        token.rename(label);
+        log.info("PAT 이름 변경: userId={}, tokenId={}, hint={}", userId, tokenId, token.getTokenHint());
+        return token;
+    }
+
+    /**
+     * 내 토큰 전부 폐기(F-21). 이미 폐기된 토큰의 최초 폐기 시각은 그대로 둔다(멱등).
+     *
+     * <p>게이트웨이의 PAT 교환 캐시(성공 60초)와 이미 발급된 교환 JWT(TTL {@code pat-jwt-ttl-seconds}, 기본 300초)는
+     * 이 호출로 지워지지 않는다 — 폐기 후 최대 그만큼 기존 토큰이 계속 통할 수 있다(단건 폐기와 같은 특성).
+     *
+     * @return 이번에 새로 폐기한 개수
+     */
+    @Transactional
+    public int revokeAll(long userId) {
+        Instant now = Instant.now();
+        int revoked = 0;
+        for (PersonalAccessToken token : tokenRepository.findByUserIdOrderByCreatedAtDesc(userId)) {
+            if (!token.isRevoked()) {
+                token.revoke(now);
+                revoked++;
+            }
+        }
+        log.info("PAT 전부 폐기: userId={}, revoked={}", userId, revoked);
+        return revoked;
+    }
+
+    /**
      * 원문 PAT → 플랫폼 JWT 교환(클러스터 내부 전용). 없음·만료·폐기·사용자 비활성은 전부
      * 빈 Optional로 같은 401이 되고, 구분은 로그에만 남긴다 — 응답 차이로 유효한 토큰을
      * 가려낼 수 없게 한다.

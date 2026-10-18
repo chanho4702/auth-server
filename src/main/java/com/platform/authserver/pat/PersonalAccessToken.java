@@ -88,6 +88,11 @@ public class PersonalAccessToken {
         return !isRevoked() && !isExpired(now);
     }
 
+    /** 이름 변경(F-21). 검증(trim·1~100자)은 컨트롤러가 발급과 같은 규칙으로 마쳤다. */
+    public void rename(String label) {
+        this.label = label;
+    }
+
     /** 폐기는 멱등 — 이미 폐기된 토큰의 시각을 덮어쓰지 않는다(최초 폐기 시점이 감사 기록). */
     public void revoke(Instant now) {
         if (revokedAt == null) {
