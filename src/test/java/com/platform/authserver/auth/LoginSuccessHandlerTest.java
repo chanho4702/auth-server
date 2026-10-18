@@ -157,5 +157,31 @@ class LoginSuccessHandlerTest {
 
         assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/app");
     }
+
+    /**
+     * Codex P2 — 비활성(org에서 정지·퇴사 전파) 사용자가 OIDC 로그인에 성공해도 새 리프레시 토큰을 발급하지 않는다.
+     * 발급하면 재활성 직후 그 토큰이 바로 살아난다. 쿠키도 없고, 초대 수락도 하지 않고, 403 안내로 끝낸다.
+     */
+    @Test
+    void 비활성_사용자는_리프레시_토큰을_받지_못하고_403_안내로_끝난다() throws Exception {
+        User disabled = userWithId(42L);
+        disabled.setEnabled(false);
+        when(userService.provision(any(), any(), any(), any(), any())).thenReturn(disabled);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(InviteController.TOKEN_ATTR, "invite-token");
+        request.setSession(session);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        handler.onAuthenticationSuccess(request, response, authentication());
+
+        verify(refreshTokenService, never()).issue(any(), any(), any());
+        verify(orgClient, never()).accept(any(), anyLong(), any(), any());
+        assertThat(response.getStatus()).isEqualTo(403);
+        assertThat(response.getHeaders("Set-Cookie")).noneMatch(c -> c.startsWith(CookieFactory.COOKIE_NAME + "=raw"));
+        assertThat(response.getRedirectedUrl()).isNull();
+        assertThat(response.getContentAsString()).contains("비활성화된 계정");
+        assertThat(session.isInvalid()).isTrue();
+    }
 }
 

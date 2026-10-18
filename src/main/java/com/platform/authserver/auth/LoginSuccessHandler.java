@@ -72,6 +72,13 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
                 OidcClaims.roles(oidcUser),
                 OidcClaims.provider(oidcUser));
 
+        if (!user.isEnabled()) {
+            // org에서 정지·퇴사가 전파된 계정(P-02). 리프레시 토큰을 발급하면 재활성 직후 그 토큰이 바로 살아난다 —
+            // 발급하지 않고, 초대도 소진하지 않고, 세션을 버리고 안내로 끝낸다(Keycloak 계정은 org가 따로 잠근다).
+            rejectDisabled(request, response, user);
+            return;
+        }
+
         String kcIdToken = oidcUser.getIdToken().getTokenValue();
         // KC refresh_token 은 OidcUser 가 아니라 authorized client 에 있다. 백채널 로그아웃에 쓴다.
         String kcRefreshToken = extractKcRefreshToken(authentication);
@@ -111,6 +118,18 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
             // 클라이언트가 이미 삼키지만 한 겹 더 둔다 — 여기서 던지면 로그인 자체가 실패한다.
             log.warn("초대 수락 통보 실패(로그인은 계속): {}", e.getClass().getSimpleName());
         }
+    }
+
+    private static void rejectDisabled(HttpServletRequest request, HttpServletResponse response, User user)
+            throws IOException {
+        log.warn("비활성 계정의 로그인 거부 — 리프레시 토큰 미발급: userId={}", user.getId());
+        HttpSession session = request.getSession(false);
+        if (session != null) session.invalidate();
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType("text/html;charset=UTF-8");
+        response.getWriter().write("<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><title>로그인할 수 없습니다</title>"
+                + "<body style=\"font-family:sans-serif;padding:48px\"><h1>비활성화된 계정입니다</h1>"
+                + "<p>정지되었거나 비활성화된 계정이라 로그인할 수 없습니다. 관리자에게 문의하세요.</p></body></html>");
     }
 
     /** OAuth2 authorized client 에서 Keycloak refresh_token 을 꺼낸다(없으면 null). */
