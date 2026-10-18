@@ -17,6 +17,11 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     @Query("update RefreshToken t set t.revoked = true where t.familyId = :familyId")
     void revokeFamily(@Param("familyId") UUID familyId);
 
+    /** 사용자의 모든 가족을 폐기(계정 비활성, P-02). 이미 폐기된 행은 건드리지 않는다(재사용 탐지 증거 보존). */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update RefreshToken t set t.revoked = true where t.userId = :userId and t.revoked = false")
+    int revokeAllForUser(@Param("userId") Long userId);
+
     // 조건부 UPDATE = check-and-set의 DB 원자 연산. 동시 rotate 중 정확히 한 요청만 1을 받는다.
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update RefreshToken t set t.revoked = true, t.replacedBy = :nextId, t.replacedAt = :now " +

@@ -101,8 +101,30 @@ public class SecurityConfig {
      * 않음) — Boot가 {@code Filter} 빈을 서블릿 컨테이너 레벨(/*)에도 자동 등록하는 것을
      * 피하기 위함(C1, 클래스 주석 참고). 이 체인에만 등록되는 지역 인스턴스다.
      */
+    /**
+     * org-service 전용 내부 경로 — 구성원 정지·퇴사·해제를 계정에 반영한다(P-02).
+     *
+     * <p>{@link #internalChain}(게이트웨이·agent-service의 {@code X-Internal-Secret})보다 앞에 서서 이 경로만 따로 잡는다.
+     * 시크릿도 다르다: org와 이미 공유하는 {@code ORG_INTERNAL_TOKEN}({@code X-Internal-Token}, 초대 API와 같은 규약).
+     * 게이트웨이가 쥔 시크릿으로는 계정 상태를 바꿀 수 없고, 이 토큰으로는 PAT 교환·서비스 토큰 발급이 열리지 않는다.
+     * 비어 있으면 fail-closed(403).
+     */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 1)
+    SecurityFilterChain orgInternalChain(HttpSecurity http,
+                                         @Value("${platform.org.internal-token:}") String orgToken) throws Exception {
+        http
+                .securityMatcher("/internal/users/**")
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable())
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .addFilterBefore(new InternalSecretFilter("X-Internal-Token", orgToken, "내부 API 토큰이 유효하지 않습니다"),
+                        UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 2)
     SecurityFilterChain internalChain(HttpSecurity http,
                                        @Value("${platform.agent.internal-secret:}") String internalSecret) throws Exception {
         http
@@ -125,7 +147,7 @@ public class SecurityConfig {
      * securityMatcher에도 걸리지 않아 {@code webChain}의 인증 요구로 떨어진다.
      */
     @Bean
-    @Order(Ordered.HIGHEST_PRECEDENCE + 2)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 3)
     SecurityFilterChain actuatorChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/actuator/health", "/actuator/info")
@@ -142,7 +164,7 @@ public class SecurityConfig {
      * <p>인가 요청 resolver를 갈아 끼우는 것은 그 세션 값으로 {@code login_hint}를 붙이기 위해서다.
      */
     @Bean
-    @Order(Ordered.HIGHEST_PRECEDENCE + 3)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 4)
     SecurityFilterChain webChain(HttpSecurity http, LoginSuccessHandler successHandler,
                                  ClientRegistrationRepository clientRegistrations) throws Exception {
         http

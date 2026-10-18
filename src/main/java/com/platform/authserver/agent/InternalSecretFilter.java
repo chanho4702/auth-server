@@ -29,20 +29,37 @@ import java.security.MessageDigest;
  */
 public class InternalSecretFilter extends OncePerRequestFilter {
 
-    private static final String HEADER = "X-Internal-Secret";
+    private static final String DEFAULT_HEADER = "X-Internal-Secret";
+    private static final String DEFAULT_MESSAGE = "내부 시크릿이 유효하지 않습니다";
 
+    private final String header;
     /** 생성 시점에 trim해 저장 — 매 요청마다 다시 trim할 이유가 없다. */
     private final String secret;
+    private final String body;
 
     public InternalSecretFilter(String secret) {
+        this(DEFAULT_HEADER, secret, DEFAULT_MESSAGE);
+    }
+
+    /**
+     * 헤더명·문구를 바꾼 같은 게이트 — org-service가 부르는 {@code /internal/users/**}는 org 쪽 규약대로
+     * {@code X-Internal-Token} + {@code ORG_INTERNAL_TOKEN}을 쓴다(P-02). 경로별로 다른 시크릿을 받으면
+     * 한 시크릿이 유출돼도 다른 경로는 열리지 않는다(P-07 방향).
+     *
+     * <p>common-starter 0.17.0의 {@code com.platform.common.security.InternalTokenFilter}와 같은 규칙(trim·상수시간·
+     * fail-closed·{@code {"error"}})이다. auth-server는 스타터를 쓰지 않아(JWT 발급자 자신) 이 사본을 유지한다.
+     */
+    public InternalSecretFilter(String header, String secret, String message) {
+        this.header = header;
         this.secret = secret == null ? "" : secret.trim();
+        this.body = "{\"error\":\"" + message + "\"}";
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        String header = request.getHeader(HEADER);
-        String trimmedHeader = header == null ? null : header.trim();
+        String presented = request.getHeader(header);
+        String trimmedHeader = presented == null ? null : presented.trim();
         boolean valid = !secret.isEmpty()
                 && trimmedHeader != null
                 && MessageDigest.isEqual(
@@ -51,7 +68,7 @@ public class InternalSecretFilter extends OncePerRequestFilter {
         if (!valid) {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.setContentType("application/json;charset=UTF-8");
-            response.getWriter().write("{\"error\":\"내부 시크릿이 유효하지 않습니다\"}");
+            response.getWriter().write(body);
             return;
         }
         filterChain.doFilter(request, response);
