@@ -32,7 +32,16 @@ public final class PatScopes {
      * {@code /api/search/admin/reindex}는 {@link #ADMIN}이 따로 지킨다.
      */
     public static final String SEARCH_READ = "search:read";
-    /** 각 서비스의 관리 경로(제품별 admin 경로, migration, agent)에 추가로 요구되는 스코프. */
+    /**
+     * 관리 작업에 추가로 요구되는 스코프 — 제품 스코프(read/write)만으로는 열리지 않는다. 강제는 게이트웨이
+     * {@code PatScopeRules}의 관리 경로 표가 한다(이 설명은 그 표를 따른다):
+     * <ul>
+     *   <li>각 제품의 {@code /api/<제품>/admin/**}, migration·agent 관리 경로</li>
+     *   <li>org: 권한 부여(grants), 초대(invitations), 설정(settings — 메일 등), 구성원 상태 변경(members 쓰기 — 정지·비활성)</li>
+     *   <li>wiki: 페이지 제한(restrictions), 스페이스 삭제, 휴지통 영구 삭제(purge)</li>
+     *   <li>alm: 설정(settings), 프로젝트 삭제</li>
+     * </ul>
+     */
     public static final String ADMIN = "admin";
 
     /**
