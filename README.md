@@ -98,6 +98,7 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | POST | `/internal/pat/exchange` | `X-Internal-Secret` | 게이트웨이 전용. `{"token":"chanho_pat_…"}` → 200 `{accessToken, expiresInSeconds}` 또는 401 `{"error":"invalid_token"}` — `PatExchangeController` |
 | POST | `/internal/service-tokens` | `X-Internal-Secret` | 에이전트 페르소나 사용자용 AT 발급 — `AgentTokenController` |
 | POST | `/api/auth/agents` | Bearer(ROLE_ADMIN) | 에이전트 페르소나 사용자 생성(멱등). 요청 `{slug([a-z0-9-]{2,40}), name, email?}` → 200 `{userId, slug, created}`, slug 형식 위반 400 — `AgentAdminController` |
+| PUT | `/internal/users/{id}/status` | `X-Internal-Token`(= `ORG_INTERNAL_TOKEN`) | org-service 전용(P-02). `{"active": false}` → 계정 닫기(`users.enabled=false` + 리프레시 토큰 전부 폐기, PAT 교환은 401), `{"active": true}` → 다시 열기. 멱등, 204 / 사용자 없음 404 / `active` 누락 400 — `InternalUserStatusController` |
 | POST | `/internal/agents` | `X-Internal-Secret` | 위 `/api/auth/agents`와 **같은 핸들러**(요청·응답·동작 동일). agent-service가 권한 판정 후 페르소나 계정을 등록하는 서비스 간 경로(AGP-64) — `AgentAdminController` |
 
 > **전역 관리자 판정은 `/api/me`가 아니다.** 여기 `roles`는 Keycloak realm 역할이고, 플랫폼 관리자 여부는
@@ -164,6 +165,8 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | `platform.token-cleanup-cron` | `TOKEN_CLEANUP_CRON` | `0 0 4 * * *` | RT·PAT 청소 배치 주기 |
 | `platform.pat-jwt-ttl-seconds` | `PAT_JWT_TTL_SECONDS` | `300` (5분) | PAT 교환으로 발급하는 JWT의 TTL. 세션 AT(900s)보다 짧게 둬 폐기 후 잔존 시간을 줄인다 |
 | `platform.pat-retention-days` | `PAT_RETENTION_DAYS` | `90` | 만료·폐기된 PAT 행을 물리 삭제하기까지의 보존 기간(감사용) |
+| `platform.security.default-secrets` | `PLATFORM_DEFAULT_SECRETS_POLICY` | `fail` | docker·prod 프로필에서 OIDC 시크릿이 `platform-bff-secret`이거나 DB 비밀번호가 `keycloak`(공개된 dev 기본값)이면 **기동 실패**. `warn`이면 경고만(실값 주입 전 과도기) — `DefaultSecretsGuard`(P-20) |
+| `platform.org.internal-token` | `ORG_INTERNAL_TOKEN` | (빈 문자열) | org 초대 API 호출(`/internal/org/**`)과, org가 부르는 `/internal/users/**`(계정 상태) 게이트 — org-service와 **같은 값**. 비면 둘 다 꺼진다(fail-closed) |
 | `platform.agent.internal-secret` | `AGENT_INTERNAL_SECRET` | (빈 문자열) | `/internal/**` 게이트 시크릿. **PAT 교환에 필수** — 비어 있으면 `InternalSecretFilter`가 내부 경로를 전부 403으로 막고(fail-closed) 게이트웨이의 PAT 교환도 함께 죽는다. auth-server와 gateway-server에 **같은 값**을 주입한다(`openssl rand -hex 32`) |
 
 ### docker 프로필 — split-horizon OIDC
@@ -246,13 +249,15 @@ src/main/resources/db/migration/
 └─ V4__personal_access_tokens.sql                           (personal_access_tokens — 개인 API 토큰)
 ```
 
-보안 필터체인 3개(`SecurityConfig`, 순서대로):
+보안 필터체인(`SecurityConfig`, 순서대로):
 
 1. `apiChain` — 자체 JWT 리소스서버(stateless, iss+aud 검증). `securityMatcher`에 **나열된 경로만** 잡는다: `/api/me` · `/api/auth/agents`·`/api/auth/agents/**`(ROLE_ADMIN) · `/api/auth/tokens`·`/api/auth/tokens/**`. 이 체인 안에서 `PatJwtGuardFilter`가 인가 판정 앞에 서서 `provider=PAT` JWT를 agents·tokens 경로에서 403으로 끊는다.
-2. `internalChain` — `/internal/**`. JWT가 아니라 `InternalSecretFilter`(상수시간 시크릿 비교, 미설정 시 fail-closed)가 인증을 전담한다.
-3. `webChain` — 그 외 전부. oauth2Login + `/api/auth/**`·`/.well-known/**`·`/error` permitAll.
+2. `orgInternalChain` — `/internal/users/**`(org-service 전용). `X-Internal-Token` = `ORG_INTERNAL_TOKEN`. 아래 `internalChain`과 시크릿이 달라 게이트웨이·에이전트 시크릿으로는 계정 상태를 못 바꾸고, 이 토큰으로는 PAT 교환·서비스 토큰 발급이 안 열린다.
+3. `internalChain` — 나머지 `/internal/**`. JWT가 아니라 `InternalSecretFilter`(상수시간 시크릿 비교, 미설정 시 fail-closed)가 인증을 전담한다.
+4. `actuatorChain` — `/actuator/health`·`/actuator/info` 익명 허용.
+5. `webChain` — 그 외 전부. oauth2Login + `/api/auth/**`·`/.well-known/**`·`/error` permitAll.
 
-`/api/auth/**` 아래에 인증이 필요한 경로를 새로 만들 때는 1번의 `securityMatcher`에 반드시 추가한다 — 빼먹으면 3번의 permitAll로 떨어져 조용히 익명에게 열린다.
+`/api/auth/**` 아래에 인증이 필요한 경로를 새로 만들 때는 1번의 `securityMatcher`에 반드시 추가한다 — 빼먹으면 5번의 permitAll로 떨어져 조용히 익명에게 열린다.
 
 ## 다른 서비스와의 연동
 
