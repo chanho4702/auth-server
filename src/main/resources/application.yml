@@ -87,6 +87,10 @@ platform:
     # 평소 로그인으로 흘러가고(안내 페이지), 이메일 대조 경로만 남는다.
     service-uri: ${ORG_SERVICE_URI:http://localhost:9130}
     internal-token: ${ORG_INTERNAL_TOKEN:}
+  security:
+    # docker·prod 프로필에서 기본 비밀값(OIDC 시크릿 platform-bff-secret, DB 비밀번호 keycloak)으로 뜨면
+    # fail(기본) = 기동 실패, warn = 경고만(실값 주입 전 과도기). DefaultSecretsGuard(P-20).
+    default-secrets: ${PLATFORM_DEFAULT_SECRETS_POLICY:fail}
   agent:
     # /internal/** 게이트 시크릿(/internal/service-tokens, /internal/pat/exchange).
     # 비어있으면(미설정) 내부 경로 전체 차단(fail-closed) — 게이트웨이 PAT 교환도 함께 막힌다.
