@@ -43,6 +43,8 @@ class RefreshTokenServicePostgresTest {
     @Autowired UserRepository userRepository;
     @Autowired RefreshTokenRepository tokenRepository;
     @Autowired TokenCleanupJob cleanupJob;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+    @Autowired com.platform.authserver.user.UserService userService;
 
     @AfterEach
     void clean() {
@@ -174,5 +176,23 @@ class RefreshTokenServicePostgresTest {
 
         // 가족 MAX(expires_at)가 미래 → 가족 생존 → 만료된 증거물 행도 보존
         assertThat(tokenRepository.findAll()).hasSize(2);
+    }
+
+    /**
+     * 계정 비활성(P-02)의 "사용자의 RT 전부 폐기"가 user_id로 들어온다 — V7 부분 인덱스(미폐기만)가 있어야
+     * refresh_tokens 전체를 훑지 않는다(Codex P2). 폐기 동작도 실 PG에서 확인한다.
+     */
+    @Test
+    void 사용자별_미폐기_RT_부분_인덱스가_있고_전부_폐기가_동작한다() {
+        String def = jdbc.queryForObject(
+                "select indexdef from pg_indexes where tablename = 'refresh_tokens' and indexname = 'idx_refresh_user_active'",
+                String.class);
+        assertThat(def).contains("(user_id)").contains("WHERE");
+
+        User u = newUser();
+        service.issue(u, "id", "kc");
+        service.issue(u, "id", "kc");
+        assertThat(userService.setActive(u.getId(), false)).isTrue();
+        assertThat(tokenRepository.findAll()).allMatch(RefreshToken::isRevoked);
     }
 }
