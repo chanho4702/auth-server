@@ -120,8 +120,10 @@ class InternalUserStatusTest {
 
     @Test
     void 없는_사용자는_404다() throws Exception {
+        // org 동기화는 이 code로만 "사용자 없음"을 판정한다 — 라우팅·프록시 404와 구분(Codex P1)
         setStatus(alice.getId() + 999, "{\"active\":false}", "X-Internal-Token", "test-org-token")
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("user_not_found"));
     }
 
     @Test

@@ -12,13 +12,17 @@ import java.util.Map;
  * 계정 상태 내부 API(P-02) — org-service의 구성원 상태 동기화 워커만 부른다.
  *
  * <p>{@code PUT /internal/users/{id}/status {"active": false}} → 계정을 닫는다(리프레시 토큰 전부 폐기, PAT 교환 거부).
- * {@code {"active": true}} → 다시 연다. 멱등. 응답: 204, 사용자 없음 404, {@code active} 누락 400.
+ * {@code {"active": true}} → 다시 연다. 멱등. 응답: 204, 사용자 없음 404 {@code {"error", "code":"user_not_found"}},
+ * {@code active} 누락 400.
  *
  * <p>인증은 {@code SecurityConfig.orgInternalChain}이 {@code X-Internal-Token}(= {@code ORG_INTERNAL_TOKEN})으로 한다.
  * 게이트웨이·nginx는 {@code /internal/**}을 라우팅하지 않는다.
  */
 @RestController
 public class InternalUserStatusController {
+
+    /** 404 본문의 식별 코드 — org-service AuthAccountClient와 맞춘 계약. */
+    public static final String USER_NOT_FOUND = "user_not_found";
 
     private final UserService users;
 
@@ -34,7 +38,8 @@ public class InternalUserStatusController {
             return ResponseEntity.badRequest().body(Map.of("error", "active 값이 필요합니다"));
         }
         if (!users.setActive(id, request.active())) {
-            return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+            // code로만 "사용자 없음"을 식별한다 — org 동기화가 라우팅·프록시·미배포의 404와 구분해 그쪽은 재시도한다.
+            return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다", "code", USER_NOT_FOUND));
         }
         return ResponseEntity.noContent().build();
     }
