@@ -81,6 +81,17 @@ platform:
   pat-jwt-ttl-seconds: ${PAT_JWT_TTL_SECONDS:300}
   # 만료·폐기된 PAT 행을 물리 삭제하기까지의 보존 기간(감사용).
   pat-retention-days: ${PAT_RETENTION_DAYS:90}
+  # 리프레시 회전 때 Keycloak 계정·롤 재확인(2026-10-24 권한·계정 점검 M1 일부). org-service와 같은 platform-admin
+  # service account(view-users)로 Admin REST를 읽는다. 시크릿이 비면 재확인 없이 로그인 때 roles를 그대로 쓴다(예전 동작).
+  #   · KC에서 잠김·삭제 → 리프레시 401 + 그 사람의 RT 전부 폐기
+  #   · KC 롤 변경 → 새 AT부터 반영(cache-seconds만큼 늦을 수 있다)
+  #   · KC 장애 → 마지막으로 맞춘 roles가 max-stale-seconds 안이면 그대로, 넘으면 503 {"error":"auth_unavailable"}(쿠키 유지)
+  keycloak-sync:
+    enabled: ${KC_ROLE_SYNC_ENABLED:true}
+    admin-client-id: ${KC_ADMIN_CLIENT_ID:platform-admin}
+    admin-client-secret: ${KC_ADMIN_CLIENT_SECRET:}
+    cache-seconds: ${KC_ROLE_SYNC_CACHE_SECONDS:60}
+    max-stale-seconds: ${KC_ROLE_SYNC_MAX_STALE_SECONDS:86400}
   org:
     # org-service 서비스 간 API(/internal/org/**). 초대 확인·수락은 로그인 도중에 일어나
     # 사용자 토큰이 없으므로 이 토큰이 유일한 인증이다. 비어 있으면 초대 링크는 그냥

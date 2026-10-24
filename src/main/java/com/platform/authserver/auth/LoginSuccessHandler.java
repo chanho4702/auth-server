@@ -87,6 +87,7 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
         response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.refreshCookie(issued.rawToken()).toString());
 
         consumeInviteToken(request, user, oidcUser);
+        ensureOrgMember(user);
 
         String rawReturnTo = readCookie(request, RETURN_TO_COOKIE);
         if (rawReturnTo != null) {
@@ -113,10 +114,24 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
         session.removeAttribute(InviteController.EMAIL_ATTR);
         if (token == null || token.toString().isBlank() || user.getId() == null) return;
         try {
-            orgClient.accept(token.toString(), user.getId(), oidcUser.getEmail(), oidcUser.getFullName());
+            orgClient.accept(token.toString(), user.getId(), oidcUser.getEmail(), oidcUser.getFullName(),
+                    oidcUser.getEmailVerified());
         } catch (RuntimeException e) {
             // 클라이언트가 이미 삼키지만 한 겹 더 둔다 — 여기서 던지면 로그인 자체가 실패한다.
             log.warn("초대 수락 통보 실패(로그인은 계속): {}", e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * org 구성원 행 보장(Top 5-①). 초대 수락 <b>뒤에</b> 부른다 — 수락이 행을 ACTIVE로 만들었으면 그대로 두고,
+     * 수락이 없거나 실패했으면 여기서 PENDING 행이 생긴다. 이름은 JWT {@code name}과 같은 값(users.name)을 보낸다.
+     */
+    private void ensureOrgMember(User user) {
+        if (user.getId() == null) return;
+        try {
+            orgClient.ensureMember(user.getId(), user.getEmail(), user.getName(), user.getProvider());
+        } catch (RuntimeException e) {
+            log.warn("구성원 행 보장 실패(로그인은 계속): {}", e.getClass().getSimpleName());
         }
     }
 

@@ -43,6 +43,17 @@ public class RefreshTokenService {
         return new Issued(raw, kcIdToken);
     }
 
+    /**
+     * 이 토큰의 주인(토큰 상태와 무관). 회전 전에 Keycloak 계정을 재확인하려고 쓴다 — HTTP 호출을 회전 트랜잭션
+     * 안에 넣지 않기 위해 따로 읽는다. 토큰이 없으면 빈 값이고, 그때는 {@link #rotate}가 평소대로 거절한다.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<User> ownerOf(String rawToken) {
+        if (rawToken == null) return java.util.Optional.empty();
+        return tokenRepository.findByTokenHash(sha256(rawToken))
+                .flatMap(t -> userRepository.findById(t.getUserId()));
+    }
+
     @Transactional(noRollbackFor = ReuseDetectedException.class)
     public Rotated rotate(String rawToken) {
         RefreshToken current = tokenRepository.findByTokenHash(sha256(rawToken))

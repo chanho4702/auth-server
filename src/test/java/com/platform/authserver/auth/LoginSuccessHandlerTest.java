@@ -73,9 +73,11 @@ class LoginSuccessHandlerTest {
     }
 
     private OAuth2AuthenticationToken authentication() {
-        OidcIdToken idToken = new OidcIdToken(
-                "tok", Instant.now(), Instant.now().plusSeconds(60),
-                Map.of("sub", "kc-1", "email", "a@b.com", "name", "Alice"));
+        return authentication(Map.of("sub", "kc-1", "email", "a@b.com", "name", "Alice"));
+    }
+
+    private OAuth2AuthenticationToken authentication(Map<String, Object> claims) {
+        OidcIdToken idToken = new OidcIdToken("tok", Instant.now(), Instant.now().plusSeconds(60), claims);
         return new OAuth2AuthenticationToken(new DefaultOidcUser(List.of(), idToken), List.of(), "keycloak");
     }
 
@@ -130,7 +132,7 @@ class LoginSuccessHandlerTest {
 
         handler.onAuthenticationSuccess(request, new MockHttpServletResponse(), authentication());
 
-        verify(orgClient).accept(eq("tok-123"), eq(42L), eq("a@b.com"), any());
+        verify(orgClient).accept(eq("tok-123"), eq(42L), eq("a@b.com"), any(), any());
         // 일회용 — 남겨 두면 다음 로그인이 지난 초대를 다시 들고 간다
         assertThat(session.getAttribute(InviteController.TOKEN_ATTR)).isNull();
         assertThat(session.getAttribute(InviteController.EMAIL_ATTR)).isNull();
@@ -140,13 +142,13 @@ class LoginSuccessHandlerTest {
     void 초대_세션이_아니면_org를_부르지_않는다() throws Exception {
         loginWith();
 
-        verify(orgClient, never()).accept(any(), anyLong(), any(), any());
+        verify(orgClient, never()).accept(any(), anyLong(), any(), any(), any());
     }
 
     @Test
     void org_호출이_실패해도_로그인은_계속된다() throws Exception {
         doThrow(new RuntimeException("org down"))
-                .when(orgClient).accept(any(), anyLong(), any(), any());
+                .when(orgClient).accept(any(), anyLong(), any(), any(), any());
         MockHttpServletRequest request = new MockHttpServletRequest();
         MockHttpSession session = new MockHttpSession();
         session.setAttribute(InviteController.TOKEN_ATTR, "tok-123");
@@ -176,12 +178,71 @@ class LoginSuccessHandlerTest {
         handler.onAuthenticationSuccess(request, response, authentication());
 
         verify(refreshTokenService, never()).issue(any(), any(), any());
-        verify(orgClient, never()).accept(any(), anyLong(), any(), any());
+        verify(orgClient, never()).accept(any(), anyLong(), any(), any(), any());
         assertThat(response.getStatus()).isEqualTo(403);
         assertThat(response.getHeaders("Set-Cookie")).noneMatch(c -> c.startsWith(CookieFactory.COOKIE_NAME + "=raw"));
         assertThat(response.getRedirectedUrl()).isNull();
         assertThat(response.getContentAsString()).contains("비활성화된 계정");
         assertThat(session.isInvalid()).isTrue();
     }
-}
 
+    /**
+     * 권한·계정 점검 Top 5-①: org CheckPermission은 구성원 행이 없으면 PENDING으로 거부하므로, 로그인 성공 순간 행을 보장한다.
+     * 초대 수락 뒤에 부른다(수락이 ACTIVE로 만든 행은 ensure가 그대로 둔다).
+     */
+    @Test
+    void 로그인_성공이면_초대_수락_뒤에_org_구성원_행을_보장한다() throws Exception {
+        User u = userWithId(42L);
+        u.setEmail("a@b.com");
+        u.setName("Alice");
+        u.setProvider("GOOGLE");
+        when(userService.provision(any(), any(), any(), any(), any())).thenReturn(u);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(InviteController.TOKEN_ATTR, "tok-123");
+        request.setSession(session);
+
+        handler.onAuthenticationSuccess(request, new MockHttpServletResponse(), authentication());
+
+        var order = org.mockito.Mockito.inOrder(orgClient);
+        order.verify(orgClient).accept(eq("tok-123"), eq(42L), eq("a@b.com"), any(), any());
+        order.verify(orgClient).ensureMember(42L, "a@b.com", "Alice", "GOOGLE");
+    }
+
+    @Test
+    void 구성원_행_보장이_실패해도_로그인은_계속된다() throws Exception {
+        doThrow(new RuntimeException("org down")).when(orgClient).ensureMember(anyLong(), any(), any(), any());
+
+        MockHttpServletResponse response = loginWith();
+
+        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/app");
+    }
+
+    /** 점검 m5: org가 검증 안 된 이메일의 링크 수락을 거절할 수 있게 email_verified를 그대로 넘긴다. */
+    @Test
+    void 초대_수락에_email_verified를_싣는다() throws Exception {
+        for (boolean verified : new boolean[]{true, false}) {
+            org.mockito.Mockito.clearInvocations(orgClient);
+            MockHttpServletRequest request = new MockHttpServletRequest();
+            MockHttpSession session = new MockHttpSession();
+            session.setAttribute(InviteController.TOKEN_ATTR, "tok-123");
+            request.setSession(session);
+
+            handler.onAuthenticationSuccess(request, new MockHttpServletResponse(), authentication(Map.of(
+                    "sub", "kc-1", "email", "a@b.com", "name", "Alice", "email_verified", verified)));
+
+            verify(orgClient).accept(eq("tok-123"), eq(42L), eq("a@b.com"), any(), eq(verified));
+        }
+    }
+
+    @Test
+    void 비활성_사용자는_구성원_행_보장도_하지_않는다() throws Exception {
+        User disabled = userWithId(42L);
+        disabled.setEnabled(false);
+        when(userService.provision(any(), any(), any(), any(), any())).thenReturn(disabled);
+
+        loginWith();
+
+        verify(orgClient, never()).ensureMember(anyLong(), any(), any(), any());
+    }
+}

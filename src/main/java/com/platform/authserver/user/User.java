@@ -46,6 +46,11 @@ public class User {
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
 
+    /** roles를 Keycloak과 마지막으로 맞춘 시각(로그인 또는 리프레시 재확인). V8. */
+    @Setter
+    @Column(name = "roles_synced_at")
+    private Instant rolesSyncedAt;
+
     public User(String keycloakSub) {
         this.keycloakSub = keycloakSub;
         this.createdAt = Instant.now();

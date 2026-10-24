@@ -67,7 +67,7 @@ myFront(React) 같은 클라이언트는 Keycloak 토큰이 아니라 **이 서�
 3. `LoginSuccessHandler`:
    - `UserService.provision()` — `keycloak_sub`로 upsert(없으면 생성, 있으면 email·name·roles·provider·lastLoginAt 동기화). roles는 Keycloak `realm_access.roles`, provider는 `identity_provider` claim(브로커링 시 "GOOGLE" 등, 없으면 "KEYCLOAK")에서 추출.
    - `RefreshTokenService.issue()` — 자체 RT 발급. 이때 KC `id_token`과 KC `refresh_token`(authorized client에서 추출)을 RT 행에 함께 저장(백채널 로그아웃용).
-   - RT 쿠키(`refresh_token`) set → `{frontend-url}/app`로 리다이렉트(오픈 리다이렉트 방어: `/`로 시작하고 `//`가 아닌 상대경로만 허용).
+   - RT 쿠키(`refresh_token`) set → 초대 세션이면 org에 수락 통보(`email_verified` 포함) → **org 구성원 행 보장**(`POST /internal/org/members/ensure` — org CheckPermission이 행 없음을 PENDING으로 거부하므로, 2026-10-24) → `{frontend-url}/app`로 리다이렉트(오픈 리다이렉트 방어: `/`로 시작하고 `//`가 아닌 상대경로만 허용). org 호출 실패는 로그인을 막지 않는다.
 4. 프론트가 마운트 시 `POST /api/auth/refresh` → 자체 Access Token 수령(silent restore).
 
 RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁으로 관용하고, grace를 넘긴 재사용은 도난으로 판단해 토큰 패밀리 전체를 폐기하며 WARN 로그를 남긴다.
@@ -126,6 +126,7 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 - **Access Token**: RS256 JWT, TTL 15분(기본). claim `iss/aud/sub(=users.id)/email/name/provider/roles/iat/exp`. 프론트 메모리 보관.
 - **Refresh Token**: opaque 32바이트 랜덤(Base64url), TTL 14일(기본). 쿠키 `refresh_token`(HttpOnly · SameSite=Lax · Secure=`platform.cookie-secure`(dev=false) · Path=`/api/auth`). **DB에는 SHA-256 해시만 저장**(원문 저장 안 함).
 - **회전 + 재사용 탐지**: refresh마다 새 토큰으로 교체하고 옛 토큰 폐기(`replaced_by` 연결). 교체는 조건부 UPDATE(`WHERE revoked=false`) **원자 선점**이라 동시 요청 중 정확히 1개만 성공. 교체된 토큰 재사용은 grace(30초) 이내면 멀티탭 경쟁으로 관용(`ConcurrentRotationException` — 가족 생존·쿠키 보존), 경과하면 **도난으로 간주해 `family_id` 전체를 폐기**(`ReuseDetectedException`, WARN 로그)하고 401.
+- **회전 때 Keycloak 재확인(2026-10-24, 권한·계정 점검 M1 일부)**: 회전 **전에** Keycloak Admin REST(`platform-admin` service account, view-users)로 `users/{keycloak_sub}`·`role-mappings/realm/composite`를 읽는다(확정 결과 60초 캐시, `agent:` 계정 제외). KC에서 **잠김·삭제** → 401 + 그 사람의 RT **전부** 폐기(`users.enabled`는 org가 정본이라 건드리지 않음). **롤 변경** → 새 AT부터 반영·`users.roles` 갱신(`roles_synced_at`, V8). **KC 장애** → 마지막으로 맞춘 roles가 `max-stale`(기본 24시간) 안이면 저장된 roles로 통과(가용성 — 구성원 정지·퇴사는 org가 따로 닫는다), 넘으면 `503 {"error":"auth_unavailable"}`(쿠키 유지 — KC 복구 후 같은 쿠키로 회복). `KC_ADMIN_CLIENT_SECRET`이 비면 재확인 없이 예전처럼 로그인 때 roles를 쓴다. KC refresh_token 재사용(`grant_type=refresh_token`)을 쓰지 않은 이유: KC SSO 세션(유휴 30분·최대 10시간)이 자체 RT(14일)보다 먼저 죽어 "세션 만료"와 "계정 잠김"을 구분할 수 없다.
 - **세션 수명**: sliding 만료(회전마다 +14일)에 **절대 상한 90일**(`family_created_at` 기준)을 병행 — 영구 세션 차단. 죽은 가족은 일 배치(`TokenCleanupJob`, 04:00)가 가족 단위로만 청소.
 - **audience 검증**: `JwtDecoder`가 서명·`iss`(`platform.issuer`)뿐 아니라 **`aud`(`platform.audience`=`platform-api`)까지 검증**한다. 다른 발급자·다른 대상의 토큰 거부. board-service 등 리소스서버도 같은 `aud`를 검증한다.
 - **역할 매핑**: `/api/me` 리소스서버 체인은 `roles` claim을 `ROLE_` 접두사 권한으로 변환.
@@ -167,6 +168,10 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | `platform.pat-retention-days` | `PAT_RETENTION_DAYS` | `90` | 만료·폐기된 PAT 행을 물리 삭제하기까지의 보존 기간(감사용) |
 | `platform.security.default-secrets` | `PLATFORM_DEFAULT_SECRETS_POLICY` | `fail` | docker·prod 프로필에서 OIDC 시크릿이 `platform-bff-secret`이거나 DB 비밀번호가 `keycloak`(공개된 dev 기본값)이면 **기동 실패**. `warn`이면 경고만(실값 주입 전 과도기) — `DefaultSecretsGuard`(P-20) |
 | `platform.org.internal-token` | `ORG_INTERNAL_TOKEN` | (빈 문자열) | org 초대 API 호출(`/internal/org/**`)과, org가 부르는 `/internal/users/**`(계정 상태) 게이트 — org-service와 **같은 값**. 비면 둘 다 꺼진다(fail-closed) |
+| `platform.keycloak-sync.admin-client-id` / `admin-client-secret` | `KC_ADMIN_CLIENT_ID` / `KC_ADMIN_CLIENT_SECRET` | `platform-admin` / (빈 값) | 리프레시 회전 때 Keycloak 계정·롤 재확인용 service account(org-service와 같은 값). 비면 재확인 생략 |
+| `platform.keycloak-sync.cache-seconds` | `KC_ROLE_SYNC_CACHE_SECONDS` | `60` | 확정 결과(활성·잠김·삭제) 캐시. 회수 지연의 상한 |
+| `platform.keycloak-sync.max-stale-seconds` | `KC_ROLE_SYNC_MAX_STALE_SECONDS` | `86400` | KC 장애 때 저장된 roles를 믿는 최대 나이. 넘으면 리프레시 503 |
+| `platform.keycloak-sync.enabled` | `KC_ROLE_SYNC_ENABLED` | `true` | 재확인 전체 스위치 |
 | `platform.agent.internal-secret` | `AGENT_INTERNAL_SECRET` | (빈 문자열) | `/internal/**` 게이트 시크릿. **PAT 교환에 필수** — 비어 있으면 `InternalSecretFilter`가 내부 경로를 전부 403으로 막고(fail-closed) 게이트웨이의 PAT 교환도 함께 죽는다. auth-server와 gateway-server에 **같은 값**을 주입한다(`openssl rand -hex 32`) |
 
 ### docker 프로필 — split-horizon OIDC
@@ -246,7 +251,9 @@ src/main/resources/db/migration/
 ├─ V1__init.sql                                             (users, refresh_tokens)
 ├─ V2__add_kc_refresh_token.sql                             (백채널 로그아웃용 kc_refresh_token 컬럼)
 ├─ V3__rotation_grace_and_absolute_expiry.sql               (replaced_at=grace 판정 · family_created_at=절대 상한)
-└─ V4__personal_access_tokens.sql                           (personal_access_tokens — 개인 API 토큰)
+├─ V4__personal_access_tokens.sql                           (personal_access_tokens — 개인 API 토큰)
+├─ V5·V6 (PAT 스코프) · V7 (refresh_tokens user_id 부분 인덱스)
+└─ V8__user_roles_synced_at.sql                             (users.roles_synced_at — 리프레시 KC 재확인 시각)
 ```
 
 보안 필터체인(`SecurityConfig`, 순서대로):

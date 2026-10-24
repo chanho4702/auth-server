@@ -47,7 +47,34 @@ public class UserService {
         user.setName(name);
         user.setRoles(roles);
         user.setProvider(provider);
-        user.setLastLoginAt(Instant.now());
+        Instant now = Instant.now();
+        user.setLastLoginAt(now);
+        user.setRolesSyncedAt(now); // 방금 Keycloak이 준 roles다
         return repository.save(user);
+    }
+
+    /** 리프레시 재확인으로 받은 최신 realm 롤을 반영한다. 바뀐 경우만 로그를 남긴다. */
+    @Transactional
+    public User applyKeycloakRoles(long userId, List<String> roles) {
+        User user = repository.findById(userId).orElse(null);
+        if (user == null) return null;
+        if (!new java.util.HashSet<>(user.getRoles()).equals(new java.util.HashSet<>(roles))) {
+            log.info("Keycloak 롤 변경 반영: userId={} {} → {}", userId, user.getRoles(), roles);
+            user.setRoles(roles);
+        }
+        user.setRolesSyncedAt(Instant.now());
+        return user;
+    }
+
+    /**
+     * Keycloak에서 계정이 잠기거나 삭제된 사람 — 리프레시 토큰을 전부 폐기한다(모든 브라우저 세션 종료).
+     * {@code users.enabled}는 건드리지 않는다: 그 값의 정본은 org 구성원 상태(P-02)이고, Keycloak에서 다시 열리면
+     * 다음 로그인이 그대로 통과해야 한다.
+     *
+     * @return 폐기한 리프레시 토큰 수
+     */
+    @Transactional
+    public int closeSessions(long userId) {
+        return refreshTokens.revokeAllForUser(userId);
     }
 }

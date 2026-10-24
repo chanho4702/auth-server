@@ -65,8 +65,13 @@ public class OrgInternalClient {
         }
     }
 
-    /** 로그인 성공 직후의 수락 통보. 실패해도 로그인은 계속한다. */
-    public void accept(String token, long memberId, String email, String displayName) {
+    /**
+     * 로그인 성공 직후의 수락 통보. 실패해도 로그인은 계속한다.
+     *
+     * @param emailVerified Keycloak {@code email_verified}. org는 참이 아니면 링크 수락을 거절한다(점검 m5 —
+     *                      검증 안 된 비밀번호 가입 이메일로 남의 초대 프리셋을 가로채지 못하게).
+     */
+    public void accept(String token, long memberId, String email, String displayName, Boolean emailVerified) {
         if (!isConfigured()) return;
         try {
             restClient.post()
@@ -77,11 +82,36 @@ public class OrgInternalClient {
                             "token", token,
                             "memberId", memberId,
                             "email", email == null ? "" : email,
-                            "displayName", displayName == null ? "" : displayName))
+                            "displayName", displayName == null ? "" : displayName,
+                            "emailVerified", Boolean.TRUE.equals(emailVerified)))
                     .retrieve()
                     .toBodilessEntity();
         } catch (RestClientException e) {
             log.warn("초대 수락 통보 실패(로그인은 계속): {}", e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * 로그인 성공 순간 org 구성원 행을 보장한다(권한·계정 점검 Top 5-①). org의 CheckPermission은 행이 없으면 PENDING으로
+     * 거부하므로, 로그인 직후 위키부터 연 사람도 막히지 않게 여기서 만든다 — 없으면 PENDING(초대·부트스트랩이면 즉시 ACTIVE),
+     * 있으면 상태 유지(멱등). 실패해도 로그인은 계속한다: org REST 첫 호출의 미러링이 같은 일을 한다.
+     */
+    public void ensureMember(long memberId, String email, String displayName, String provider) {
+        if (!isConfigured()) return;
+        try {
+            restClient.post()
+                    .uri(baseUri + "/internal/org/members/ensure")
+                    .header("X-Internal-Token", internalToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of(
+                            "memberId", memberId,
+                            "email", email == null ? "" : email,
+                            "displayName", displayName == null ? "" : displayName,
+                            "provider", provider == null ? "" : provider))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException e) {
+            log.warn("구성원 행 보장 실패(로그인은 계속): {}", e.getClass().getSimpleName());
         }
     }
 
