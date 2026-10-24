@@ -36,9 +36,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * realm_access.roles와 같은 유효 롤)를 준다. 자격은 org-service가 이미 쓰는 {@code platform-admin} service
  * account(view-users)를 그대로 쓴다.
  *
- * <p><b>짧은 캐시.</b> 확정 결과(활성·잠김·삭제)만 {@code cache-seconds}(기본 60초) 기억한다 — 탭마다 15분에 한 번
- * 회전하므로 대부분 캐시에 걸리지 않지만, 여러 탭·여러 기기가 몰릴 때 KC 왕복을 줄인다. 대가는 회수 지연 최대 60초.
- * "모름"(KC 장애)은 캐시하지 않는다.
+ * <p><b>캐시.</b> 활성(ACTIVE)은 {@code cache-seconds}(기본 60초) 기억한다 — 탭마다 15분에 한 번 회전하므로 대부분
+ * 캐시에 걸리지 않지만, 여러 탭·여러 기기가 몰릴 때 KC 왕복을 줄인다. 대가는 회수 지연 최대 60초.
+ * 부정 판정(잠김·삭제)은 시간으로 풀지 않고 {@link #evict}(성공 로그인 = KC가 다시 열었음을 확인)까지 유지한다 —
+ * 그 사람의 RT는 첫 판정 때 전부 폐기됐으므로 새 RT는 로그인으로만 생기고, 지워 두면 폐기된 옛 RT로 반복 리프레시할 때마다
+ * KC 호출과 폐기 쿼리가 다시 돈다(값싼 부하 증폭, Codex P2). 항목 수는 닫힌 계정 수로 묶인다.
+ * "모름"(KC 장애·판단할 수 없는 응답)은 캐시하지 않는다.
  *
  * <p>시크릿이 없으면(로컬·테스트) {@link Verdict.Kind#SKIPPED} — 예전 동작(스냅샷 그대로)과 같다.
  */
@@ -47,8 +50,13 @@ public class KeycloakAccountClient {
 
     private static final Logger log = LoggerFactory.getLogger(KeycloakAccountClient.class);
 
-    /** 확인 결과. {@code roles}는 ACTIVE일 때만 의미가 있다. */
-    public record Verdict(Kind kind, List<String> roles) {
+    /**
+     * 확인 결과. {@code roles}는 ACTIVE일 때만 의미가 있다. {@code cached}는 KC에 묻지 않고 기억한 값이라는 뜻 —
+     * 부정 판정이 캐시에서 왔다면 그 판정을 처음 받았을 때 이미 세션을 닫았다.
+     */
+    public record Verdict(Kind kind, List<String> roles, boolean cached) {
+        public Verdict(Kind kind, List<String> roles) { this(kind, roles, false); }
+
         public enum Kind {
             /** 계정이 있고 enabled — roles가 최신 유효 realm 롤 */
             ACTIVE,
@@ -121,14 +129,21 @@ public class KeycloakAccountClient {
         }
         Cached hit = cache.get(keycloakSub);
         Instant now = clock.instant();
-        if (hit != null && hit.at().plus(cacheTtl).isAfter(now)) return hit.verdict();
+        if (hit != null && (isNegative(hit.verdict()) || hit.at().plus(cacheTtl).isAfter(now))) {
+            Verdict v = hit.verdict();
+            return new Verdict(v.kind(), v.roles(), true);
+        }
 
         Verdict fresh = fetch(keycloakSub);
         if (fresh.kind() != Verdict.Kind.UNAVAILABLE) cache.put(keycloakSub, new Cached(fresh, now));
         return fresh;
     }
 
-    /** 계정을 닫은 직후 같은 사람의 다음 요청이 캐시된 ACTIVE를 보지 않게 한다. */
+    private static boolean isNegative(Verdict v) {
+        return v.kind() == Verdict.Kind.DISABLED || v.kind() == Verdict.Kind.GONE;
+    }
+
+    /** 기억한 판정을 지운다 — 성공 로그인(KC가 그 계정을 다시 열었음을 확인)에서만 부른다. 부정 판정은 이것으로만 풀린다. */
     public void evict(String keycloakSub) {
         if (keycloakSub != null) cache.remove(keycloakSub);
     }
@@ -145,7 +160,14 @@ public class KeycloakAccountClient {
                 return Verdict.of(Verdict.Kind.UNAVAILABLE);
             }
             JsonNode node = json.readTree(user.body());
-            if (!node.path("enabled").asBoolean(false)) return Verdict.of(Verdict.Kind.DISABLED);
+            // 명시적 boolean일 때만 판정한다 — 필드가 없거나 타입이 다르면 "잠김"이 아니라 "판단 불가"다.
+            // asBoolean(false)로 읽으면 그 사람의 세션이 전부 폐기된다(Codex P2).
+            JsonNode enabledNode = node.isObject() ? node.get("enabled") : null;
+            if (enabledNode == null || !enabledNode.isBoolean()) {
+                log.warn("Keycloak 사용자 응답에 boolean enabled가 없음 — 판단 불가로 처리");
+                return Verdict.of(Verdict.Kind.UNAVAILABLE);
+            }
+            if (!enabledNode.booleanValue()) return Verdict.of(Verdict.Kind.DISABLED);
 
             HttpResponse<String> roles = get(adminBase + "/users/" + enc(sub) + "/role-mappings/realm/composite", token);
             if (roles.statusCode() / 100 != 2) {

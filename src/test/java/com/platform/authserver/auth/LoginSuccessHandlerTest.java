@@ -48,6 +48,7 @@ class LoginSuccessHandlerTest {
     RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
     OAuth2AuthorizedClientService authorizedClientService = mock(OAuth2AuthorizedClientService.class);
     OrgInternalClient orgClient = mock(OrgInternalClient.class);
+    KeycloakAccountClient keycloakAccounts = mock(KeycloakAccountClient.class);
     LoginSuccessHandler handler;
 
     @BeforeEach
@@ -56,7 +57,14 @@ class LoginSuccessHandlerTest {
         when(refreshTokenService.issue(any(), any(), any()))
                 .thenReturn(new RefreshTokenService.Issued("raw-rt", "kc-id-token"));
         handler = new LoginSuccessHandler(userService, refreshTokenService,
-                new CookieFactory(60, false), authorizedClientService, orgClient, "http://localhost");
+                new CookieFactory(60, false), authorizedClientService, orgClient, keycloakAccounts, "http://localhost");
+    }
+
+    /** 성공 로그인만 리프레시가 기억해 둔 KC 잠김·삭제 판정을 푼다(Codex P2) — 다시 열린 계정이 막히지 않게. */
+    @Test
+    void successfulLoginEvictsKeycloakVerdict() throws Exception {
+        loginWith();
+        verify(keycloakAccounts).evict("kc-1");
     }
 
     /** users.id 는 DB 시퀀스라 테스트에서는 리플렉션으로 심는다 — 초대 수락 통보가 이 값을 싣는다. */

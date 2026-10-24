@@ -44,6 +44,7 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
     private final CookieFactory cookieFactory;
     private final OAuth2AuthorizedClientService authorizedClientService;
     private final OrgInternalClient orgClient;
+    private final KeycloakAccountClient keycloakAccounts;
     private final String frontendUrl;
 
     public LoginSuccessHandler(UserService userService,
@@ -51,12 +52,14 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
                                CookieFactory cookieFactory,
                                OAuth2AuthorizedClientService authorizedClientService,
                                OrgInternalClient orgClient,
+                               KeycloakAccountClient keycloakAccounts,
                                @Value("${platform.frontend-url}") String frontendUrl) {
         this.userService = userService;
         this.refreshTokenService = refreshTokenService;
         this.cookieFactory = cookieFactory;
         this.authorizedClientService = authorizedClientService;
         this.orgClient = orgClient;
+        this.keycloakAccounts = keycloakAccounts;
         this.frontendUrl = frontendUrl;
     }
 
@@ -78,6 +81,9 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
             rejectDisabled(request, response, user);
             return;
         }
+
+        // Keycloak 로그인이 통과했다 = KC가 이 계정을 열어 두었다. 리프레시가 기억해 둔 잠김·삭제 판정은 여기서만 푼다.
+        keycloakAccounts.evict(oidcUser.getSubject());
 
         String kcIdToken = oidcUser.getIdToken().getTokenValue();
         // KC refresh_token 은 OidcUser 가 아니라 authorized client 에 있다. 백채널 로그아웃에 쓴다.

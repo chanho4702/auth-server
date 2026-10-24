@@ -107,7 +107,23 @@ class RefreshKeycloakSyncTest {
                 .andExpect(jsonPath("$.error").value("invalid_refresh_token"));
 
         verify(userService).closeSessions(42L);
-        verify(keycloakAccounts).evict("kc-sub-42");
+        // 부정 판정은 캐시에 남겨 둔다(Codex P2) — 지우면 폐기된 옛 RT의 반복 리프레시가 매번 KC+폐기 쿼리를 부른다.
+        verify(keycloakAccounts, never()).evict(anyString());
+        verify(refreshTokenService, never()).rotate(anyString());
+    }
+
+    /** 캐시에서 온 부정 판정 — 처음 판정 때 이미 닫았으므로 401만, 폐기 쿼리를 다시 돌리지 않는다(Codex P2). */
+    @Test
+    void 캐시된_부정_판정이면_폐기_쿼리_없이_401만() throws Exception {
+        when(keycloakAccounts.check("kc-sub-42")).thenReturn(
+                new KeycloakAccountClient.Verdict(KeycloakAccountClient.Verdict.Kind.DISABLED, List.of(), true));
+
+        mvc.perform(post("/api/auth/refresh").cookie(new Cookie("refresh_token", "raw-rt")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("invalid_refresh_token"));
+
+        verify(userService, never()).closeSessions(anyLong());
+        verify(keycloakAccounts, never()).evict(anyString());
         verify(refreshTokenService, never()).rotate(anyString());
     }
 

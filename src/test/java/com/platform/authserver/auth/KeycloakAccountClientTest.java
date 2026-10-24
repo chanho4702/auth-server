@@ -103,6 +103,55 @@ class KeycloakAccountClientTest {
         assertThat(client().check("kc-1").kind()).isEqualTo(KeycloakAccountClient.Verdict.Kind.UNAVAILABLE);
     }
 
+    /**
+     * Codex P2: 200 + 유효 JSON인데 {@code enabled}가 없거나 boolean이 아니면 "잠김"이 아니라 "판단 불가"다.
+     * 예전에는 {@code asBoolean(false)}가 DISABLED로 읽어 그 사람의 리프레시 토큰을 전부 폐기했다.
+     */
+    @Test
+    void enabled가_없거나_boolean이_아니면_DISABLED가_아니라_UNAVAILABLE이다() {
+        for (String body : List.of(
+                "{\"id\":\"kc-1\"}",
+                "{\"id\":\"kc-1\",\"enabled\":null}",
+                "{\"id\":\"kc-1\",\"enabled\":\"false\"}",
+                "{\"id\":\"kc-1\",\"enabled\":0}",
+                "[]")) {
+            userBody = body;
+            assertThat(client().check("kc-1").kind()).as(body).isEqualTo(KeycloakAccountClient.Verdict.Kind.UNAVAILABLE);
+        }
+        // 명시적 boolean만 판정한다
+        userBody = "{\"id\":\"kc-1\",\"enabled\":false}";
+        assertThat(client().check("kc-1").kind()).isEqualTo(KeycloakAccountClient.Verdict.Kind.DISABLED);
+        userBody = "{\"id\":\"kc-1\",\"enabled\":true}";
+        assertThat(client().check("kc-1").kind()).isEqualTo(KeycloakAccountClient.Verdict.Kind.ACTIVE);
+    }
+
+    /**
+     * Codex P2: 부정 판정(잠김·삭제)은 캐시 시간이 지나도 유지한다 — 폐기된 옛 RT로 반복 리프레시해도 KC를 다시
+     * 부르지 않는다. 무효화는 성공 로그인({@link KeycloakAccountClient#evict})만 한다.
+     */
+    @Test
+    void 부정_판정은_캐시_시간이_지나도_유지하고_evict로만_풀린다() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-24T00:00:00Z"));
+        KeycloakAccountClient c = client(Duration.ofSeconds(60), clock);
+        userBody = "{\"id\":\"kc-1\",\"enabled\":false}";
+
+        assertThat(c.check("kc-1").kind()).isEqualTo(KeycloakAccountClient.Verdict.Kind.DISABLED);
+        clock.advance(Duration.ofDays(3));
+        assertThat(c.check("kc-1").kind()).isEqualTo(KeycloakAccountClient.Verdict.Kind.DISABLED);
+        assertThat(paths.stream().filter(p -> p.endsWith("/users/kc-1")).count()).isEqualTo(1);
+
+        userStatus = 404;
+        c.check("kc-2");
+        clock.advance(Duration.ofDays(3));
+        assertThat(c.check("kc-2").kind()).isEqualTo(KeycloakAccountClient.Verdict.Kind.GONE);
+        assertThat(paths.stream().filter(p -> p.endsWith("/users/kc-2")).count()).isEqualTo(1);
+
+        userStatus = 200;
+        userBody = "{\"id\":\"kc-1\",\"enabled\":true}";
+        c.evict("kc-1"); // 성공 로그인 = KC가 다시 열었음을 확인
+        assertThat(c.check("kc-1").kind()).isEqualTo(KeycloakAccountClient.Verdict.Kind.ACTIVE);
+    }
+
     @Test
     void 시크릿이_없거나_에이전트_계정이면_확인하지_않는다() {
         KeycloakAccountClient noSecret = new KeycloakAccountClient(

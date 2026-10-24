@@ -67,11 +67,15 @@ public class AuthController {
             switch (verdict.kind()) {
                 case DISABLED, GONE -> {
                     // Keycloak에서 잠기거나 지워진 계정 — 이 토큰만이 아니라 그 사람의 RT 전부를 폐기한다(B3 일부).
-                    int revoked = userService.closeSessions(u.getId());
-                    keycloakAccounts.evict(u.getKeycloakSub());
-                    log.warn("Keycloak 계정 {} — 리프레시 거부, 리프레시 토큰 {}개 폐기: userId={}",
-                            verdict.kind() == KeycloakAccountClient.Verdict.Kind.GONE ? "삭제" : "비활성",
-                            revoked, u.getId());
+                    // 부정 판정은 캐시에 남긴다(무효화는 성공 로그인만) — 폐기된 옛 RT로 반복 리프레시해도 KC 호출·폐기 쿼리를
+                    // 다시 돌리지 않는다(Codex P2). 캐시에서 온 판정이면 처음 받았을 때 이미 닫았으므로 거부만 한다.
+                    String what = verdict.kind() == KeycloakAccountClient.Verdict.Kind.GONE ? "삭제" : "비활성";
+                    if (verdict.cached()) {
+                        log.debug("Keycloak 계정 {}(캐시) — 리프레시 거부: userId={}", what, u.getId());
+                    } else {
+                        int revoked = userService.closeSessions(u.getId());
+                        log.warn("Keycloak 계정 {} — 리프레시 거부, 리프레시 토큰 {}개 폐기: userId={}", what, revoked, u.getId());
+                    }
                     return unauthorizedWithCookieDelete();
                 }
                 case UNAVAILABLE -> {
