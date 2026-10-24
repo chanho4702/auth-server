@@ -97,7 +97,7 @@ RT 재사용 탐지는 grace(기본 30초) 이내 재사용을 멀티탭 경쟁�
 | DELETE | `/api/auth/tokens/{id}` | Bearer(자체 JWT) | PAT 폐기 → 204. 이미 폐기면 그대로 204(멱등), 남의 토큰이면 404 |
 | POST | `/internal/pat/exchange` | `X-Internal-Secret` | 게이트웨이 전용. `{"token":"chanho_pat_…"}` → 200 `{accessToken, expiresInSeconds}` 또는 401 `{"error":"invalid_token"}` — `PatExchangeController` |
 | POST | `/internal/service-tokens` | `X-Internal-Secret` | 에이전트 페르소나 사용자용 AT 발급 — `AgentTokenController` |
-| POST | `/api/auth/agents` | Bearer(ROLE_ADMIN) | 에이전트 페르소나 사용자 생성(멱등). 요청 `{slug([a-z0-9-]{2,40}), name, email?}` → 200 `{userId, slug, created}`, slug 형식 위반 400 — `AgentAdminController` |
+| POST | `/api/auth/agents` | Bearer + **org 활성 전역 관리자**(2026-10-24 — 예전 Keycloak `ROLE_ADMIN`. org 장애면 503 `{error:"org_unavailable"}`) | 에이전트 페르소나 사용자 생성(멱등). 요청 `{slug([a-z0-9-]{2,40}), name, email?}` → 200 `{userId, slug, created}`, slug 형식 위반 400 — `AgentAdminController` |
 | PUT | `/internal/users/{id}/status` | `X-Internal-Token`(= `ORG_INTERNAL_TOKEN`) | org-service 전용(P-02). `{"active": false}` → 계정 닫기(`users.enabled=false` + 리프레시 토큰 전부 폐기, PAT 교환은 401), `{"active": true}` → 다시 열기. 멱등, 204 / 사용자 없음 404 / `active` 누락 400 — `InternalUserStatusController` |
 | POST | `/internal/agents` | `X-Internal-Secret` | 위 `/api/auth/agents`와 **같은 핸들러**(요청·응답·동작 동일). agent-service가 권한 판정 후 페르소나 계정을 등록하는 서비스 간 경로(AGP-64) — `AgentAdminController` |
 
@@ -258,7 +258,7 @@ src/main/resources/db/migration/
 
 보안 필터체인(`SecurityConfig`, 순서대로):
 
-1. `apiChain` — 자체 JWT 리소스서버(stateless, iss+aud 검증). `securityMatcher`에 **나열된 경로만** 잡는다: `/api/me` · `/api/auth/agents`·`/api/auth/agents/**`(ROLE_ADMIN) · `/api/auth/tokens`·`/api/auth/tokens/**`. 이 체인 안에서 `PatJwtGuardFilter`가 인가 판정 앞에 서서 `provider=PAT` JWT를 agents·tokens 경로에서 403으로 끊는다.
+1. `apiChain` — 자체 JWT 리소스서버(stateless, iss+aud 검증). `securityMatcher`에 **나열된 경로만** 잡는다: `/api/me` · `/api/auth/agents`·`/api/auth/agents/**`(org 활성 전역 관리자 — `OrgGlobalAdminFilter`가 org `GET /internal/org/members/{id}/authz`로 판정, 30초 캐시) · `/api/auth/tokens`·`/api/auth/tokens/**`. 이 체인 안에서 `PatJwtGuardFilter`가 인가 판정 앞에 서서 `provider=PAT` JWT를 agents·tokens 경로에서 403으로 끊는다.
 2. `orgInternalChain` — `/internal/users/**`(org-service 전용). `X-Internal-Token` = `ORG_INTERNAL_TOKEN`. 아래 `internalChain`과 시크릿이 달라 게이트웨이·에이전트 시크릿으로는 계정 상태를 못 바꾸고, 이 토큰으로는 PAT 교환·서비스 토큰 발급이 안 열린다.
 3. `internalChain` — 나머지 `/internal/**`. JWT가 아니라 `InternalSecretFilter`(상수시간 시크릿 비교, 미설정 시 fail-closed)가 인증을 전담한다.
 4. `actuatorChain` — `/actuator/health`·`/actuator/info` 익명 허용.

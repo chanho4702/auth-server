@@ -37,6 +37,9 @@ class InternalAgentRegistrationTest {
 
     @Autowired WebApplicationContext context;
     @Autowired UserRepository userRepository;
+    /** /api/auth/agents 게이트는 org 활성 전역 관리자(2026-10-24) — 1번을 관리자로 둔다. */
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.platform.authserver.invite.OrgInternalClient orgClient;
     MockMvc mvc;
     final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -47,6 +50,8 @@ class InternalAgentRegistrationTest {
 
     @BeforeEach
     void setup() {
+        org.mockito.Mockito.when(orgClient.globalAdmin(1L))
+                .thenReturn(com.platform.authserver.invite.OrgInternalClient.AdminCheck.ADMIN);
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         userRepository.deleteAll();
     }

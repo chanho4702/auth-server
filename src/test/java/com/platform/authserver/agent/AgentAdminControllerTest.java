@@ -33,6 +33,8 @@ class AgentAdminControllerTest {
     @Autowired WebApplicationContext context;
     @Autowired UserRepository userRepository;
     @Autowired JwtService jwtService;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.platform.authserver.invite.OrgInternalClient orgClient;
     MockMvc mvc;
     final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -40,6 +42,50 @@ class AgentAdminControllerTest {
     void setup() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         userRepository.deleteAll();
+        // 2026-10-24: 에이전트 관리 게이트의 정본은 org 활성 전역 관리자(OrgGlobalAdminFilter). 기본은 거부.
+        org.mockito.Mockito.when(orgClient.globalAdmin(org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(com.platform.authserver.invite.OrgInternalClient.AdminCheck.NOT_ADMIN);
+        org.mockito.Mockito.when(orgClient.globalAdmin(1L))
+                .thenReturn(com.platform.authserver.invite.OrgInternalClient.AdminCheck.ADMIN);
+        org.mockito.Mockito.when(orgClient.globalAdmin(999L))
+                .thenReturn(com.platform.authserver.invite.OrgInternalClient.AdminCheck.ADMIN);
+    }
+
+    /** Keycloak realm 롤 ADMIN만으로는 열리지 않는다 — org 전역 관리자가 아니면 403(데모 계정 admin 같은 경우). */
+    @Test
+    void kc_admin_role_without_org_global_admin_is_forbidden() throws Exception {
+        mvc.perform(post("/api/auth/agents")
+                        .with(jwt().jwt(j -> j.subject("2").claim("roles", List.of("ADMIN")))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slug\":\"kconly\",\"name\":\"KC\"}"))
+                .andExpect(status().isForbidden());
+        assertThat(userRepository.count()).isZero();
+    }
+
+    /** KC 롤이 없어도 org 전역 관리자면 연다(정본은 org). */
+    @Test
+    void org_global_admin_without_kc_admin_role_is_allowed() throws Exception {
+        mvc.perform(post("/api/auth/agents")
+                        .with(jwt().jwt(j -> j.subject("1").claim("roles", List.of("USER")))
+                                .authorities(new SimpleGrantedAuthority("ROLE_USER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slug\":\"orgonly\",\"name\":\"Org\"}"))
+                .andExpect(status().isOk());
+    }
+
+    /** org 장애는 거부로 위장하지 않는다 — 503 {"error":"org_unavailable"}. */
+    @Test
+    void org_unavailable_is_503_not_403() throws Exception {
+        org.mockito.Mockito.when(orgClient.globalAdmin(77L))
+                .thenReturn(com.platform.authserver.invite.OrgInternalClient.AdminCheck.UNAVAILABLE);
+        mvc.perform(post("/api/auth/agents")
+                        .with(jwt().jwt(j -> j.subject("77").claim("roles", List.of("ADMIN")))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slug\":\"down\",\"name\":\"Down\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.error").value("org_unavailable"));
     }
 
     @Test
@@ -77,7 +123,7 @@ class AgentAdminControllerTest {
     @Test
     void non_admin_forbidden() throws Exception {
         mvc.perform(post("/api/auth/agents")
-                        .with(jwt().jwt(j -> j.subject("1").claim("roles", List.of("USER")))
+                        .with(jwt().jwt(j -> j.subject("3").claim("roles", List.of("USER")))
                                 .authorities(new SimpleGrantedAuthority("ROLE_USER")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"slug\":\"jiho\",\"name\":\"지호\"}"))
@@ -91,7 +137,7 @@ class AgentAdminControllerTest {
      * 컨버터를 end-to-end로 태운다(I2).
      */
     @Test
-    void real_admin_token_authorizes_via_roles_converter() throws Exception {
+    void real_admin_token_authorizes_via_org_global_admin() throws Exception {
         String adminToken = jwtService.issueAccessToken(999L, "admin@agents.local", "Admin", List.of("ADMIN"), "TEST");
 
         mvc.perform(post("/api/auth/agents")
@@ -102,7 +148,7 @@ class AgentAdminControllerTest {
     }
 
     @Test
-    void real_user_token_forbidden_via_roles_converter() throws Exception {
+    void real_user_token_forbidden_without_org_global_admin() throws Exception {
         String userToken = jwtService.issueAccessToken(998L, "user@agents.local", "User", List.of("USER"), "TEST");
 
         mvc.perform(post("/api/auth/agents")

@@ -41,6 +41,9 @@ class PatJwtGuardFilterTest {
     @Autowired JwtService jwtService;
     @Autowired UserRepository userRepository;
     @Autowired PersonalAccessTokenRepository tokenRepository;
+    /** 에이전트 관리 게이트의 정본은 org 활성 전역 관리자(2026-10-24) — 1번만 관리자다. */
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.platform.authserver.invite.OrgInternalClient orgClient;
 
     MockMvc mvc;
 
@@ -49,6 +52,10 @@ class PatJwtGuardFilterTest {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         tokenRepository.deleteAll();
         userRepository.deleteAll();
+        org.mockito.Mockito.when(orgClient.globalAdmin(org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(com.platform.authserver.invite.OrgInternalClient.AdminCheck.NOT_ADMIN);
+        org.mockito.Mockito.when(orgClient.globalAdmin(1L))
+                .thenReturn(com.platform.authserver.invite.OrgInternalClient.AdminCheck.ADMIN);
     }
 
     /** PAT 교환으로 나온 JWT. 롤은 주인 것을 그대로 물려받으므로 ADMIN일 수 있다. */
@@ -106,11 +113,11 @@ class PatJwtGuardFilterTest {
         assertThat(userRepository.count()).isEqualTo(1);
     }
 
-    /** ADMIN이 아닌 세션은 종전대로 ADMIN 게이트에서 막힌다(PAT 코드가 아니라 평범한 403). */
+    /** org 전역 관리자가 아닌 세션은 관리자 게이트에서 막힌다(PAT 코드가 아니라 평범한 403). */
     @Test
     void non_admin_session_jwt_is_still_plain_forbidden() throws Exception {
         mvc.perform(post("/api/auth/agents")
-                        .header("Authorization", "Bearer " + sessionJwt(List.of("USER")))
+                        .header("Authorization", "Bearer " + jwtService.issueAccessToken(2L, "user@demo.com", "사용자", List.of("USER"), "KEYCLOAK"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"slug\":\"jiho\",\"name\":\"지호\"}"))
                 .andExpect(status().isForbidden())

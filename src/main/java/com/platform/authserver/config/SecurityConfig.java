@@ -79,16 +79,19 @@ public class SecurityConfig {
      */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
-    SecurityFilterChain apiChain(HttpSecurity http, JwtAuthenticationConverter converter) throws Exception {
+    SecurityFilterChain apiChain(HttpSecurity http, JwtAuthenticationConverter converter,
+                                 com.platform.authserver.invite.OrgInternalClient orgClient) throws Exception {
         http
                 .securityMatcher("/api/me", "/api/auth/agents", "/api/auth/agents/**", "/api/auth/tokens", "/api/auth/tokens/**")
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/agents", "/api/auth/agents/**").hasRole("ADMIN")
+                        // 에이전트 관리는 Keycloak realm 롤 ADMIN이 아니라 org 활성 전역 관리자만(2026-10-24) —
+                        // 판정은 OrgGlobalAdminFilter가 한다(403 / org 장애 503). 여기서는 인증만 요구한다.
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)))
-                .addFilterBefore(new PatJwtGuardFilter(), AuthorizationFilter.class);
+                .addFilterBefore(new PatJwtGuardFilter(), AuthorizationFilter.class)
+                .addFilterAfter(new com.platform.authserver.agent.OrgGlobalAdminFilter(orgClient), PatJwtGuardFilter.class);
         return http.build();
     }
 

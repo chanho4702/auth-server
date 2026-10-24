@@ -115,6 +115,32 @@ public class OrgInternalClient {
         }
     }
 
+    /** 전역 관리자 판정 결과. UNAVAILABLE은 "모름"이다 — 호출측이 503으로 올린다(거부와 섞지 않는다). */
+    public enum AdminCheck { ADMIN, NOT_ADMIN, UNAVAILABLE }
+
+    /**
+     * 이 사람이 org의 <b>활성 전역 관리자</b>인가({@code GET /internal/org/members/{id}/authz}, 2026-10-24).
+     * 플랫폼 관리자의 정본은 org GLOBAL ADMIN grant다 — Keycloak realm 롤 ADMIN이 아니다.
+     * 미설정·연결 실패·5xx는 UNAVAILABLE, 4xx(경로 없음 포함)는 NOT_ADMIN(fail-closed).
+     */
+    public AdminCheck globalAdmin(long memberId) {
+        if (!isConfigured()) return AdminCheck.UNAVAILABLE;
+        try {
+            Map<?, ?> body = restClient.get()
+                    .uri(baseUri + "/internal/org/members/{id}/authz", memberId)
+                    .header("X-Internal-Token", internalToken)
+                    .retrieve()
+                    .body(Map.class);
+            return body != null && Boolean.TRUE.equals(body.get("globalAdmin")) ? AdminCheck.ADMIN : AdminCheck.NOT_ADMIN;
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            log.warn("org 전역 관리자 판정 거부: status={}", e.getStatusCode().value());
+            return AdminCheck.NOT_ADMIN;
+        } catch (RestClientException e) {
+            log.warn("org 전역 관리자 판정 실패(가용성): {}", e.getClass().getSimpleName());
+            return AdminCheck.UNAVAILABLE;
+        }
+    }
+
     private static String trimTrailingSlash(String value) {
         String v = value == null ? "" : value.trim();
         while (v.endsWith("/")) v = v.substring(0, v.length() - 1);
