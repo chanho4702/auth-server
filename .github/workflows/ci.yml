@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # 26.04 이미지의 Docker에서 Testcontainers가 Docker 환경을 못 찾음(2026-11-02 다른 리포 CI 실측) — 전 리포 러너 통일
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
