@@ -145,7 +145,7 @@ public class SecurityConfig {
      * {@code oauth2Login}에 걸려 프로브가 Keycloak 로그인으로 302 리다이렉트되기 때문이다.
      * 세션도 만들지 않는다(프로브가 JSESSIONID를 쌓지 않게).
      *
-     * <p>여기 나열한 두 경로만 익명 허용이다. 다른 {@code /actuator/**}는 애초에
+     * <p>여기 나열한 세 경로(health·info·prometheus — 메트릭은 Alloy가 내부망에서 긁는다)만 익명 허용이다. 다른 {@code /actuator/**}는 애초에
      * {@code management.endpoints.web.exposure.include}에 없어 노출되지 않고, 이 체인의
      * securityMatcher에도 걸리지 않아 {@code webChain}의 인증 요구로 떨어진다.
      */
@@ -153,7 +153,7 @@ public class SecurityConfig {
     @Order(Ordered.HIGHEST_PRECEDENCE + 3)
     SecurityFilterChain actuatorChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher("/actuator/health", "/actuator/info")
+                .securityMatcher("/actuator/health", "/actuator/info", "/actuator/prometheus")
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());

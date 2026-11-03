@@ -37,12 +37,16 @@ spring:
             issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/sso-demo}
 
 # 내부망 전용 관측 표면. 게이트웨이 라우트는 /api/**뿐이고 nginx도 actuator를 넘기지 않으므로
-# 외부에서 닿지 않는다. 노출은 health/info 둘뿐 — 나머지 엔드포인트는 include에 없어서 404다.
+# 외부에서 닿지 않는다. 노출은 health/info/prometheus뿐 — 나머지 엔드포인트는 include에 없어서 404다.
+# prometheus는 Alloy가 도커 내부망에서 긁는 메트릭이다(infra-settings observability).
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}   # 모든 미터에 서비스 이름 태그(Grafana 서비스별 분리)
   endpoint:
     health:
       show-details: always

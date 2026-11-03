@@ -50,6 +50,15 @@ class ActuatorEndpointsTest {
         mvc.perform(get("/actuator/info")).andExpect(status().isOk());
     }
 
+    /** 메트릭은 Alloy가 내부망에서 토큰 없이 긁는다 — Keycloak 로그인 302로 새면 수집이 조용히 멈춘다. */
+    @Test
+    void prometheus_is_anonymous_200_with_application_tag() throws Exception {
+        String body = mvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).contains("jvm_memory_used_bytes").contains("application=\"auth-server\"");
+    }
+
     @Test
     void other_actuator_endpoints_are_not_exposed() throws Exception {
         for (String path : new String[]{"/actuator/env", "/actuator/beans", "/actuator/metrics", "/actuator"}) {
