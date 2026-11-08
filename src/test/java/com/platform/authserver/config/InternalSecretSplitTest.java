@@ -170,6 +170,40 @@ class InternalSecretSplitTest {
         }
     }
 
+    /**
+     * compose가 새 변수를 빈 문자열로 넘기는 실제 배포 형태({@code AUTH_PAT_EXCHANGE_SECRET: ${AUTH_PAT_EXCHANGE_SECRET:-}}).
+     * Spring 플레이스홀더 기본값은 "프로퍼티 없음"에만 적용되므로 폴백은 Java에서 한다 — 빈(또는 빈 항목뿐인) 새 값은 옛 값으로.
+     */
+    @Nested
+    @TestPropertySource(properties = {
+            "AUTH_PAT_EXCHANGE_SECRET=",
+            "AUTH_AGENT_ADMIN_SECRET= ",
+            "AUTH_ACCOUNT_SYNC_TOKEN= , ",
+            "ORG_IDENTITY_TOKEN=",
+            "AGENT_INTERNAL_SECRET=legacy-secret",
+            "ORG_INTERNAL_TOKEN=legacy-token"})
+    class BlankNewFallsBackToLegacy extends Base {
+
+        @Autowired com.platform.authserver.invite.OrgInternalClient orgClient;
+
+        @Test
+        void 새_변수가_빈_문자열이면_세_경로_모두_옛_값으로_통과한다() throws Exception {
+            assertPassed(patExchange("legacy-secret"));
+            assertPassed(patStats("legacy-secret"));
+            assertPassed(agents("legacy-secret"));
+            assertPassed(serviceTokens("legacy-secret"));
+            assertPassed(userStatus("legacy-token"));
+            assertRejected(patExchange("legacy-token"), SECRET_REJECT);
+            assertRejected(userStatus("legacy-secret"), TOKEN_REJECT);
+        }
+
+        @Test
+        void 새_변수가_빈_문자열이면_아웃바운드도_옛_ORG_INTERNAL_TOKEN을_보낸다() {
+            assertThat(orgClient.isConfigured()).isTrue();
+            assertThat(org.springframework.test.util.ReflectionTestUtils.getField(orgClient, "internalToken")).isEqualTo("legacy-token");
+        }
+    }
+
     /** 무중단 회전 — 수신 쪽에 "신,구"를 넣으면 두 값 모두 통과하고 제3의 값은 거부된다. */
     @Nested
     @TestPropertySource(properties = {
