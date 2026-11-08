@@ -15,7 +15,7 @@ import java.util.Map;
  * {@code {"active": true}} → 다시 연다. 멱등. 응답: 204, 사용자 없음 404 {@code {"error", "code":"user_not_found"}},
  * {@code active} 누락 400.
  *
- * <p>인증은 {@code SecurityConfig.orgInternalChain}이 {@code X-Internal-Token}(= {@code ORG_INTERNAL_TOKEN})으로 한다.
+ * <p>인증은 {@code SecurityConfig.orgInternalChain}이 {@code X-Internal-Token}(= {@code AUTH_ACCOUNT_SYNC_TOKEN}, 비면 옛 {@code ORG_INTERNAL_TOKEN} — N5)으로 한다.
  * 게이트웨이·nginx는 {@code /internal/**}을 라우팅하지 않는다.
  */
 @RestController

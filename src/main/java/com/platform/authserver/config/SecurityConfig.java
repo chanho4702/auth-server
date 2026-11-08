@@ -96,46 +96,70 @@ public class SecurityConfig {
     }
 
     /**
-     * 게이트웨이가 라우팅하지 않는 클러스터 내부 전용 경로. JWT가 아니라
-     * {@link InternalSecretFilter}가 인증을 전담하므로 authorizeHttpRequests는 permitAll —
-     * 필터가 시크릿 불일치/미설정 시 403으로 직접 응답하고 체인을 끊는다.
-     *
-     * <p>{@code InternalSecretFilter}는 여기서 {@code new}로 직접 만든다(빈으로 등록하지
-     * 않음) — Boot가 {@code Filter} 빈을 서블릿 컨테이너 레벨(/*)에도 자동 등록하는 것을
-     * 피하기 위함(C1, 클래스 주석 참고). 이 체인에만 등록되는 지역 인스턴스다.
-     */
-    /**
      * org-service 전용 내부 경로 — 구성원 정지·퇴사·해제를 계정에 반영한다(P-02).
      *
-     * <p>{@link #internalChain}(게이트웨이·agent-service의 {@code X-Internal-Secret})보다 앞에 서서 이 경로만 따로 잡는다.
-     * 시크릿도 다르다: org와 이미 공유하는 {@code ORG_INTERNAL_TOKEN}({@code X-Internal-Token}, 초대 API와 같은 규약).
-     * 게이트웨이가 쥔 시크릿으로는 계정 상태를 바꿀 수 없고, 이 토큰으로는 PAT 교환·서비스 토큰 발급이 열리지 않는다.
-     * 비어 있으면 fail-closed(403).
+     * <p>{@code X-Internal-Secret} 체인들보다 앞에 서서 이 경로만 따로 잡는다. 헤더도 org 쪽 규약({@code X-Internal-Token},
+     * 초대 API와 같은 이름)이다. 허용 값은 계정 동기화 전용 {@code platform.internal.account-sync-token}
+     * ({@code AUTH_ACCOUNT_SYNC_TOKEN}, 비면 옛 {@code ORG_INTERNAL_TOKEN} — N5). auth → org 아웃바운드 신원 토큰과는 별개다:
+     * 그 값을 쥔 쪽(auth)이 이 경로를 여는 것도, 이 값으로 PAT 교환·서비스 토큰 발급을 여는 것도 안 된다. 비어 있으면 fail-closed(403).
      */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 1)
     SecurityFilterChain orgInternalChain(HttpSecurity http,
-                                         @Value("${platform.org.internal-token:}") String orgToken) throws Exception {
-        http
-                .securityMatcher("/internal/users/**")
-                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .csrf(csrf -> csrf.disable())
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                .addFilterBefore(new InternalSecretFilter("X-Internal-Token", orgToken, "내부 API 토큰이 유효하지 않습니다"),
-                        UsernamePasswordAuthenticationFilter.class);
-        return http.build();
+                                         @Value("${platform.internal.account-sync-token:}") String accountSyncToken) throws Exception {
+        return internalGate(http, new InternalSecretFilter("X-Internal-Token", accountSyncToken, "내부 API 토큰이 유효하지 않습니다"),
+                "/internal/users/**");
     }
 
+    /**
+     * PAT 교환 — 게이트웨이만 부른다({@code /internal/pat/exchange}, 대시보드 집계 {@code /internal/pat/stats}).
+     * 허용 값 {@code platform.internal.pat-exchange-secret}({@code AUTH_PAT_EXCHANGE_SECRET}, 비면 옛 {@code AGENT_INTERNAL_SECRET} — N5).
+     * 게이트웨이가 쥔 값으로는 에이전트 계정·서비스 토큰을 만들 수 없다.
+     */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 2)
-    SecurityFilterChain internalChain(HttpSecurity http,
-                                       @Value("${platform.agent.internal-secret:}") String internalSecret) throws Exception {
+    SecurityFilterChain patInternalChain(HttpSecurity http,
+                                         @Value("${platform.internal.pat-exchange-secret:}") String patExchangeSecret) throws Exception {
+        return internalGate(http, new InternalSecretFilter(patExchangeSecret), "/internal/pat/**");
+    }
+
+    /**
+     * 에이전트 관리 — agent-service만 부른다(에이전트 계정 등록 {@code /internal/agents}, 서비스 토큰 발급 {@code /internal/service-tokens}).
+     * 허용 값 {@code platform.internal.agent-admin-secret}({@code AUTH_AGENT_ADMIN_SECRET}, 비면 옛 {@code AGENT_INTERNAL_SECRET} — N5).
+     */
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 3)
+    SecurityFilterChain agentAdminInternalChain(HttpSecurity http,
+                                                @Value("${platform.internal.agent-admin-secret:}") String agentAdminSecret) throws Exception {
+        return internalGate(http, new InternalSecretFilter(agentAdminSecret),
+                "/internal/agents", "/internal/agents/**", "/internal/service-tokens", "/internal/service-tokens/**");
+    }
+
+    /**
+     * 위 세 체인에 걸리지 않은 나머지 {@code /internal/**} — 어떤 값으로도 열리지 않는다(빈 허용 목록 = 항상 403).
+     * 새 내부 경로를 만들면 용도에 맞는 체인의 securityMatcher에 넣어야 열린다 — 잊으면 닫힌 채로 남는다(fail-closed).
+     * 이 체인이 없으면 그 경로가 {@code webChain}으로 떨어져 OAuth2 로그인 리다이렉트가 된다.
+     */
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 4)
+    SecurityFilterChain internalChain(HttpSecurity http) throws Exception {
+        return internalGate(http, new InternalSecretFilter(""), "/internal/**");
+    }
+
+    /**
+     * 게이트웨이가 라우팅하지 않는 클러스터 내부 전용 경로의 공통 골격. JWT가 아니라 {@link InternalSecretFilter}가 인증을
+     * 전담하므로 authorizeHttpRequests는 permitAll — 필터가 불일치/미설정 시 403으로 직접 응답하고 체인을 끊는다.
+     *
+     * <p>{@code InternalSecretFilter}는 호출측에서 {@code new}로 직접 만든다(빈으로 등록하지 않음) — Boot가 {@code Filter}
+     * 빈을 서블릿 컨테이너 레벨(/*)에도 자동 등록하는 것을 피하기 위함(C1, 클래스 주석 참고). 이 체인에만 등록되는 지역 인스턴스다.
+     */
+    private static SecurityFilterChain internalGate(HttpSecurity http, InternalSecretFilter gate, String... paths) throws Exception {
         http
-                .securityMatcher("/internal/**")
+                .securityMatcher(paths)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                .addFilterBefore(new InternalSecretFilter(internalSecret), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(gate, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
@@ -150,7 +174,7 @@ public class SecurityConfig {
      * securityMatcher에도 걸리지 않아 {@code webChain}의 인증 요구로 떨어진다.
      */
     @Bean
-    @Order(Ordered.HIGHEST_PRECEDENCE + 3)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 5)
     SecurityFilterChain actuatorChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/actuator/health", "/actuator/info", "/actuator/prometheus")
@@ -167,7 +191,7 @@ public class SecurityConfig {
      * <p>인가 요청 resolver를 갈아 끼우는 것은 그 세션 값으로 {@code login_hint}를 붙이기 위해서다.
      */
     @Bean
-    @Order(Ordered.HIGHEST_PRECEDENCE + 4)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 6)
     SecurityFilterChain webChain(HttpSecurity http, LoginSuccessHandler successHandler,
                                  ClientRegistrationRepository clientRegistrations) throws Exception {
         http

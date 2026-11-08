@@ -33,14 +33,27 @@ public class OrgInternalClient {
     private final String internalToken;
 
     public OrgInternalClient(@Value("${platform.org.service-uri:}") String baseUri,
-                             @Value("${platform.org.internal-token:}") String internalToken) {
+                             @Value("${platform.internal.org-identity-token:}") String internalToken) {
         this.baseUri = trimTrailingSlash(baseUri);
-        this.internalToken = internalToken == null ? "" : internalToken;
+        this.internalToken = firstToken(internalToken);
         // org가 멈추면 로그인 스레드가 함께 잠긴다 — best-effort는 예외는 삼켜도 행(hang)은 못 삼킨다.
         HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(3));
         this.restClient = RestClient.builder().requestFactory(requestFactory).build();
+    }
+
+    /**
+     * 보낼 값 하나 — 설정값이 콤마 목록이면 첫 비어 있지 않은 항목(trim). 신원 토큰은 {@code ORG_IDENTITY_TOKEN}, 비면 옛
+     * {@code ORG_INTERNAL_TOKEN}(N5)인데, 회전 중 옛 변수에 수신용 {@code 신,구}가 들어 있어도 목록째 보내지 않게 한다.
+     */
+    static String firstToken(String configured) {
+        if (configured == null) return "";
+        for (String item : configured.split(",")) {
+            String v = item.trim();
+            if (!v.isEmpty()) return v;
+        }
+        return "";
     }
 
     public boolean isConfigured() { return !baseUri.isEmpty() && !internalToken.isEmpty(); }
