@@ -106,8 +106,10 @@ public class SecurityConfig {
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 1)
     SecurityFilterChain orgInternalChain(HttpSecurity http,
-                                         @Value("${platform.internal.account-sync-token:}") String accountSyncToken) throws Exception {
-        return internalGate(http, new InternalSecretFilter("X-Internal-Token", accountSyncToken, "내부 API 토큰이 유효하지 않습니다"),
+                                         @Value("${platform.internal.account-sync-token:}") String accountSyncToken,
+                                         @Value("${platform.org.internal-token:}") String legacyOrgToken) throws Exception {
+        return internalGate(http, new InternalSecretFilter("X-Internal-Token",
+                        InternalSecretFilter.orLegacy(accountSyncToken, legacyOrgToken), "내부 API 토큰이 유효하지 않습니다"),
                 "/internal/users/**");
     }
 
@@ -119,8 +121,10 @@ public class SecurityConfig {
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 2)
     SecurityFilterChain patInternalChain(HttpSecurity http,
-                                         @Value("${platform.internal.pat-exchange-secret:}") String patExchangeSecret) throws Exception {
-        return internalGate(http, new InternalSecretFilter(patExchangeSecret), "/internal/pat/**");
+                                         @Value("${platform.internal.pat-exchange-secret:}") String patExchangeSecret,
+                                         @Value("${platform.agent.internal-secret:}") String legacySecret) throws Exception {
+        return internalGate(http, new InternalSecretFilter(InternalSecretFilter.orLegacy(patExchangeSecret, legacySecret)),
+                "/internal/pat/**");
     }
 
     /**
@@ -130,8 +134,9 @@ public class SecurityConfig {
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE + 3)
     SecurityFilterChain agentAdminInternalChain(HttpSecurity http,
-                                                @Value("${platform.internal.agent-admin-secret:}") String agentAdminSecret) throws Exception {
-        return internalGate(http, new InternalSecretFilter(agentAdminSecret),
+                                                @Value("${platform.internal.agent-admin-secret:}") String agentAdminSecret,
+                                                @Value("${platform.agent.internal-secret:}") String legacySecret) throws Exception {
+        return internalGate(http, new InternalSecretFilter(InternalSecretFilter.orLegacy(agentAdminSecret, legacySecret)),
                 "/internal/agents", "/internal/agents/**", "/internal/service-tokens", "/internal/service-tokens/**");
     }
 

@@ -88,6 +88,16 @@ public class InternalSecretFilter extends OncePerRequestFilter {
                 .toList();
     }
 
+    /**
+     * 용도별 새 값이 비면(없음·빈 문자열·빈 항목뿐) 옛 공용 값으로 폴백(N5). compose는 새 변수를 {@code ${X:-}}로 빈 문자열째
+     * 넘기고 Spring 플레이스홀더 기본값은 "프로퍼티 없음"에만 적용되므로, 폴백을 yml이 아니라 여기서 한다.
+     * 결과도 비면 그대로 빈 값 — 호출측이 fail-closed로 다룬다.
+     */
+    public static String orLegacy(String configured, String legacy) {
+        if (!parse(configured).isEmpty()) return configured;
+        return legacy == null ? "" : legacy;
+    }
+
     /** 후보마다 상수시간 비교. 일치를 찾아도 멈추지 않는다 — 몇 번째 후보와 맞았는지가 응답 시간으로 새지 않게. */
     private boolean matches(String presented) {
         if (secrets.isEmpty() || presented == null || presented.isEmpty()) return false;

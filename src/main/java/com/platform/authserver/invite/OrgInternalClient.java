@@ -32,8 +32,15 @@ public class OrgInternalClient {
     private final String baseUri;
     private final String internalToken;
 
+    /** 스프링이 쓰는 생성자 — 신원 토큰이 비면(빈 문자열 포함) 옛 {@code ORG_INTERNAL_TOKEN}으로 폴백(N5, 폴백은 Java에서). */
+    @org.springframework.beans.factory.annotation.Autowired
     public OrgInternalClient(@Value("${platform.org.service-uri:}") String baseUri,
-                             @Value("${platform.internal.org-identity-token:}") String internalToken) {
+                             @Value("${platform.internal.org-identity-token:}") String identityToken,
+                             @Value("${platform.org.internal-token:}") String legacyToken) {
+        this(baseUri, com.platform.authserver.agent.InternalSecretFilter.orLegacy(identityToken, legacyToken));
+    }
+
+    public OrgInternalClient(String baseUri, String internalToken) {
         this.baseUri = trimTrailingSlash(baseUri);
         this.internalToken = firstToken(internalToken);
         // org가 멈추면 로그인 스레드가 함께 잠긴다 — best-effort는 예외는 삼켜도 행(hang)은 못 삼킨다.

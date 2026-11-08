@@ -149,6 +149,8 @@ class InternalSecretSplitTest {
             "ORG_INTERNAL_TOKEN=legacy-token"})
     class LegacyFallback extends Base {
 
+        @Autowired com.platform.authserver.invite.OrgInternalClient orgClient;
+
         @Test
         void 옛_AGENT_INTERNAL_SECRET으로_PAT와_에이전트_경로가_모두_열린다() throws Exception {
             assertPassed(patExchange("legacy-secret"));
@@ -161,7 +163,7 @@ class InternalSecretSplitTest {
         void 옛_ORG_INTERNAL_TOKEN으로_계정_동기화가_열리고_아웃바운드도_같은_값이다() throws Exception {
             assertPassed(userStatus("legacy-token"));
             assertRejected(userStatus("legacy-secret"), TOKEN_REJECT);
-            assertThat(env.getProperty("platform.internal.org-identity-token")).isEqualTo("legacy-token");
+            assertThat(org.springframework.test.util.ReflectionTestUtils.getField(orgClient, "internalToken")).isEqualTo("legacy-token");
         }
 
         @Test

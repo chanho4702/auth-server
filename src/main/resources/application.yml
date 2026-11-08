@@ -112,14 +112,15 @@ platform:
     internal-secret: ${AGENT_INTERNAL_SECRET:}
   # 내부 비밀 용도별 분리(N5, 2026-11-08). 경로마다 허용 값이 따로다 — 한 값이 새도 다른 경로는 열리지 않는다.
   # 값은 콤마로 여러 개 적을 수 있다(신,구 — 무중단 회전: 수신에 "신,구" → 발신을 신으로 → 수신에서 구 제거).
-  # 새 변수가 비면 옛 변수로 폴백한다(compose 없이 dev 오프셋 클러스터에서도 같은 동작). 모두 비면 해당 경로 fail-closed(403).
+  # 새 변수가 비면(없음·빈 문자열·빈 항목뿐) 옛 변수로 폴백한다 — 폴백은 Java(InternalSecrets.orLegacy)에서 한다:
+  # Spring 플레이스홀더 기본값은 "프로퍼티 없음"에만 적용돼 compose가 넘기는 빈 문자열을 못 잡는다. 모두 비면 해당 경로 fail-closed(403).
   internal:
     # 게이트웨이 → /internal/pat/exchange, /internal/pat/stats (X-Internal-Secret). 비면 AGENT_INTERNAL_SECRET.
-    pat-exchange-secret: ${AUTH_PAT_EXCHANGE_SECRET:${platform.agent.internal-secret:}}
+    pat-exchange-secret: ${AUTH_PAT_EXCHANGE_SECRET:}
     # agent-service → /internal/agents, /internal/service-tokens (X-Internal-Secret). 비면 AGENT_INTERNAL_SECRET.
-    agent-admin-secret: ${AUTH_AGENT_ADMIN_SECRET:${platform.agent.internal-secret:}}
+    agent-admin-secret: ${AUTH_AGENT_ADMIN_SECRET:}
     # org-service → /internal/users/** (X-Internal-Token, 구성원 비활성 전파). 비면 ORG_INTERNAL_TOKEN.
-    account-sync-token: ${AUTH_ACCOUNT_SYNC_TOKEN:${platform.org.internal-token:}}
+    account-sync-token: ${AUTH_ACCOUNT_SYNC_TOKEN:}
     # auth-server → org /internal/org/invitations/**, members/ensure, members/{id}/authz (X-Internal-Token). 비면 ORG_INTERNAL_TOKEN.
     # 보내는 값이라 목록이면 첫 항목만 싣는다.
-    org-identity-token: ${ORG_IDENTITY_TOKEN:${platform.org.internal-token:}}
+    org-identity-token: ${ORG_IDENTITY_TOKEN:}
